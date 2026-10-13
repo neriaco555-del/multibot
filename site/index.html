@@ -733,7 +733,9 @@ header .hic .ic{ width:23px; height:23px; }
       const mode = (u && u.avatar) || 'photo';
       av = (mode === 'none') ? '' : (mode === 'init'
         ? `<div class="pava" style="background:${colorFor(m.from)}">${esc(String(m.from).trim().charAt(0))}</div>`
-        : `<img class="pava" src="${photoFor(m.from)}" onerror="this.style.display='none'">`);
+        : (String(mode).startsWith('/')
+          ? `<img class="pava" src="${esc(mode)}" onerror="this.style.display='none'">`
+          : `<img class="pava" src="${photoFor(m.from)}" onerror="this.style.display='none'">`));
     }
     const tick = mine ? `<div class="dot${S.receipts ? '' : ' gray'}">✓</div>` : '';
     row.innerHTML = `${av}<div class="bubble" id="${m.id}"><div class="bbody"></div></div>${tick}`;
@@ -756,7 +758,6 @@ header .hic .ic{ width:23px; height:23px; }
     if (!mine && m.from !== me && document.hidden !== undefined) { beep(); flashTitle(); notifyDesktop('מולטי בוט: ' + m.from, m.text); }
     if (call && isBot(m.from)) speakBot(m.text);
     if (m.room && m.room !== curRoom) bumpUnread(m.room);
-    if (call && isBot(m.from)) speakBot(m.text);
   }
   function paintMedia(body, m) {
     if (!m.media || !m.media.url) return;
@@ -917,7 +918,8 @@ header .hic .ic{ width:23px; height:23px; }
       const avHtml = isBot(u.name) ? '<div class="ava" style="background:var(--kPrimary)">🤖</div>'
         : (u.avatar === 'none' ? `<div class="ava" style="background:${colorFor(u.name)}"></div>`
         : (u.avatar === 'init' ? `<div class="ava" style="background:${colorFor(u.name)}">${esc((u.name || '?').trim().charAt(0))}</div>`
-        : `<img class="ava" src="${photoFor(u.name)}" onerror="this.style.display='none'">`));
+        : (String(u.avatar || '').startsWith('/') ? `<img class="ava" src="${esc(u.avatar)}" onerror="this.style.display='none'">`
+        : `<img class="ava" src="${photoFor(u.name)}" onerror="this.style.display='none'">`)));
       d.innerHTML = `${avHtml}<div><b></b><small></small></div>${blocked ? '<span class="blk" title="בטל חסימה" style="color:var(--kErr)"><svg class="ic"><use href="#i-block"/></svg></span>' : '<span class="blk" title="חסום"><svg class="ic"><use href="#i-block"/></svg></span>'}<span class="blk" data-call="v" title="שיחה קולית"><svg class="ic"><use href="#i-phone"/></svg></span><span class="blk" data-call="vd" title="וידאו"><svg class="ic"><use href="#i-video"/></svg></span><div class="on"></div>`;
       d.querySelector('b').textContent = u.name + (u.name === me ? ' (אתה)' : '');
       d.querySelector('small').textContent = sub;
@@ -1264,7 +1266,18 @@ header .hic .ic{ width:23px; height:23px; }
   function startCall(video) {
     if (call) { endCall(); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert('הדפדפן לא תומך בזיהוי קולי — פתח בכרום'); return; }
+    if (!SR) {
+      // אין זיהוי קולי (WebView/אפליקציה) — מצב לחץ-ודבר: מקליט, שולח, הבוט עונה בקול
+      call = { pt: true, t0: Date.now(), timer: null, speaker: true };
+      $('call').classList.remove('video');
+      $('call').classList.add('open');
+      $('cmute').classList.remove('off');
+      const tick = () => { if (call) $('ctimer').textContent = fmtT(Math.floor((Date.now() - call.t0) / 1000)); };
+      tick();
+      call.timer = setInterval(tick, 1000);
+      startPtRec();
+      return;
+    }
     call = { video: !!video, t0: Date.now(), rec: null, muted: false, speaker: true, stream: null, timer: null };
     $('call').classList.toggle('video', !!video);
     $('call').classList.add('open');
@@ -1305,9 +1318,33 @@ header .hic .ic{ width:23px; height:23px; }
         send({ t:'ask', text: txt });
       }
     };
-    rec.onend = () => { if (call && !call.muted) { try { startListen(); } catch {} } };
-    rec.onerror = () => {};
+    rec.onend = () => { if (call && !call.muted && !call.pt && Date.now() - (call.errAt || 0) > 3000) { try { startListen(); } catch {} } };
+    rec.onerror = (e) => { if (call) { call.errAt = Date.now(); $('cheard').textContent = 'שגיאת מיקרופון (' + ((e && e.error) || 'לא ידוע') + ') — בודק שוב...'; } };
     try { rec.start(); } catch {}
+  }
+  // 🎤 לחץ-ודבר למכשירים בלי זיהוי קולי: הקלטה → שליחה → הבוט מתמלל ועונה בקול
+  async function startPtRec() {
+    if (!call || !call.pt) return;
+    if (!navigator.mediaDevices || !window.MediaRecorder) { endCall(); flashErr('אין הקלטה במכשיר הזה'); return; }
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!call || !call.pt) { try { st.getTracks().forEach((t) => t.stop()); } catch {} return; }
+      const chunks = [];
+      const rec = new MediaRecorder(st);
+      call.ptRec = rec; call.ptStream = st;
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = async () => {
+        try { st.getTracks().forEach((t) => t.stop()); } catch {}
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        endCall();
+        if (blob.size < 1000) { flashErr('ההקלטה קצרה מדי'); return; }
+        flashErr('שולח לתמלול... 🎤');
+        const up = await uploadFile(new File([blob], 'pt-' + Date.now() + '.webm', { type: blob.type }));
+        if (up) { up.kind = 'audio'; send({ t: 'msg', text: '', media: { url: up.url, kind: 'audio' } }); flashErr('הבוט שמע ויענה כאן 🙂'); }
+      };
+      rec.start();
+      $('cheard').textContent = '🔴 מקליט... דבר עברית, לחץ 📵 לסיום ושליחה';
+    } catch { endCall(); flashErr('אין גישה למיקרופון'); }
   }
   function renderCallBubble(txt) {
     const row = document.createElement('div');
@@ -1331,6 +1368,8 @@ header .hic .ic{ width:23px; height:23px; }
   }
   function endCall() {
     if (!call) return;
+    if (call.ptRec && call.ptRec.state !== 'inactive') { try { call.ptRec.stop(); } catch {} return; } // onstop ממשיך לניקוי
+    try { call.ptStream && call.ptStream.getTracks().forEach((t) => t.stop()); } catch {}
     try { call.rec && call.rec.stop(); } catch {}
     try { call.stream && call.stream.getTracks().forEach((t) => t.stop()); } catch {}
     try { speechSynthesis.cancel(); } catch {}
@@ -1344,7 +1383,7 @@ header .hic .ic{ width:23px; height:23px; }
   $('videobtn').onclick = () => startCall(true);
   $('cend').onclick = endCall;
   $('cmute').onclick = () => {
-    if (!call) return;
+    if (!call || call.pt) return;
     call.muted = !call.muted;
     $('cmute').classList.toggle('off', call.muted);
     if (call.muted) { try { call.rec && call.rec.stop(); } catch {} }
@@ -1708,7 +1747,11 @@ header .hic .ic{ width:23px; height:23px; }
         d.className = 'tile';
         d.innerHTML = '<div class="ava"></div><div class="inf"><div class="r1"><b></b><span></span></div><div class="r2"><small></small></div></div>';
         d.querySelector('.ava').style.background = colorFor(u.name);
-        d.querySelector('.ava').textContent = (u.name || '?').trim().charAt(0);
+        if (u.avatar && String(u.avatar).startsWith('/')) {
+          d.querySelector('.ava').innerHTML = `<img class="ava" src="${esc(u.avatar)}" style="width:100%;height:100%;object-fit:cover" onerror="this.remove()">`;
+        } else {
+          d.querySelector('.ava').textContent = (u.name || '?').trim().charAt(0);
+        }
         d.querySelector('b').textContent = u.name;
         d.querySelector('small').textContent = u.about || [u.phone, u.email].filter(Boolean).join(' · ') || 'מחובר/ת — לחץ לצ\'אט';
         d.onclick = () => send({ t: 'dm', to: u.name });
@@ -1812,6 +1855,7 @@ header .hic .ic{ width:23px; height:23px; }
       `<div class="sec">🛡️ פרטיות</div>` +
       selRow('נראה לאחרונה ומחובר', 'מי רואה את הנוכחות שלך', 'presence', [['all', 'כולם'], ['none', 'אף אחד']]) +
       selRow('תמונת פרופיל', 'איך תוצג בצ\'אט', 'avatar', [['photo', 'תמונה'], ['init', 'אות ראשונה'], ['none', 'בלי תמונה']]) +
+      `<div class="row"><div class="lab">תמונה אישית<small>${(S.avatar && String(S.avatar).startsWith('/')) ? 'מוגדרת ✅ לחץ להחלפה' : 'העלאת תמונה מהמכשיר'}</small></div><button class="btn" style="width:auto;margin:0;padding:9px 18px" id="avup">📷 העלאה</button></div>` +
       txtRow('אודות', 'שורה אישית ליד השם', 'about', 'היי, אני במולטי בוט') +
       tglRow('אישורי קריאה', 'וי כחול בהודעות שלך', 'receipts') +
       selRow('הודעות נעלמות', 'מחיקה אוטומטית להודעות שלך', 'exp', [[0, 'כבוי'], [24, '24 שעות'], [168, '7 ימים'], [2160, '90 יום']]) +
@@ -1867,6 +1911,18 @@ header .hic .ic{ width:23px; height:23px; }
       S.blocked.splice(+b.dataset.unblock, 1); saveS(); buildSettings();
     });
     $('setlist').querySelectorAll('[data-fn]').forEach((b) => b.onclick = () => settingsFn(b.dataset.fn));
+    const avb = $('setlist').querySelector('#avup');
+    if (avb) avb.onclick = () => {
+      const i = document.createElement('input');
+      i.type = 'file'; i.accept = 'image/*';
+      i.onchange = async () => {
+        const f = i.files[0];
+        if (!f) return;
+        const up = await uploadFile(f);
+        if (up) { S.avatar = up.url; saveS(); pushProfile(); buildSettings(); flashErr('תמונת הפרופיל עודכנה ✅'); }
+      };
+      i.click();
+    };
     calcStorage();
   }
   function pushProfile(){
@@ -2000,6 +2056,12 @@ header .hic .ic{ width:23px; height:23px; }
   // ===== אתחול =====
   applyS();
   bootLock().then(() => {});
+  // התחברות אוטומטית עם השם השמור (הצ'אטים נשמרים בשרת ונטענים מחדש)
+  try {
+    if (saved.name && saved.name.trim().length >= 2) {
+      setTimeout(() => { try { if (!me) connect(); } catch {} }, 500);
+    }
+  } catch {}
 })();
 </script>
 </body>

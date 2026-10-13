@@ -28,6 +28,17 @@ import { fileURLToPath } from 'node:url';
 import { chatAI } from './ai-chat.js';
 import { searchWeb } from './web-search.js';
 import { generateImage } from './ai-image.js';
+import { normalizeNaturalCommand, aiRouteCommand, KNOWN_FIRST } from './nlp.js';
+import { resolveAiTool, runAiTool } from './aifun.js';
+import { searchYouTube, formatMediaResults } from './media-search.js';
+import { translateText, getWeather, searchImages } from './web-search.js';
+import { transcribeAudio } from './aimedia.js';
+import { searchProducts, affiliateUrl } from './aliexpress.js';
+import {
+  animalImage, currencyRates, cryptoPrices, newsHe,
+  cityTime, dice, coin, pickOne, genPassword, randNum, randColor, dateHe, countdown,
+  shabbatTimes, stockPrice, shortenUrl, earthquakes, airQuality, resolveIndexSymbol,
+} from './more.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || process.env.SITE_PORT || 3002);
@@ -251,28 +262,15 @@ async function pumpBot() {
     roomCast(job.roomId, { t: 'typing', from: BOT_NAME, room: job.roomId });
     const r = getRoom(job.roomId);
     const histArr = (r.hist || []).slice(-12).map((h) => `${h.from}: ${h.text}`.slice(0, 220));
-    // בקשת תמונה לבוט (כמו בקבוצה)
-    const imgM = job.text.match(/^(תמונה|צייר|ציור|תצייר|תכין (?:לי )?תמונה|image|draw)\s*[:\-]?\s*([\s\S]+)?$/i);
-    if (imgM && (imgM[2] || '').trim().length >= 2) {
-      const prompt = imgM[2].trim().slice(0, 300);
-      try {
-        const { buffer } = await Promise.race([
-          generateImage(prompt),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('img-timeout')), 120000)),
-        ]);
-        if (buffer && buffer.length > 5000) {
-          const mdir = path.join(DIR, 'site', 'media');
-          try { fs.mkdirSync(mdir, { recursive: true }); } catch {}
-          const fid = 'bot' + Date.now().toString(36) + '.jpg';
-          fs.writeFileSync(path.join(mdir, fid), buffer);
-          const item = { id: `m${++msgSeq}-${Date.now().toString(36)}`, from: BOT_NAME, text: prompt.slice(0, 200), at: Date.now(), media: { url: '/media/' + fid, kind: 'image' } };
-          rr2push(job.roomId, item);
-          botBusyUntil = Date.now() + 3000;
-          return;
-        }
-      } catch (e) {
-        console.warn('site-bot image fail:', (e && e.message || '').slice(0, 80));
-      }
+    let handled = false;
+    try {
+      handled = await siteAnswer(job, histArr);
+    } catch (e) {
+      console.warn('site-cmd fail:', (e && e.message || '').slice(0, 100));
+    }
+    if (handled) {
+      botBusyUntil = Date.now() + 1500;
+      return;
     }
     // תשובת AI זהה לבוט: חיפוש רשת אוטומטי + היסטוריה דו-צדדית
     let q = job.text;
@@ -304,6 +302,351 @@ ${String(s2).trim().slice(0, 1500)}
   }
 }
 
+/* ---------- 🤖 בוט האתר — כל פקודות הקבוצה (אותם מנועים כמו בוואטסאפ) ---------- */
+function saveSiteMedia(buf, ext) {
+  const mdir = path.join(DIR, 'site', 'media');
+  try { fs.mkdirSync(mdir, { recursive: true }); } catch {}
+  const fid = 'bot' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36) + '.' + ext;
+  fs.writeFileSync(path.join(mdir, fid), buf);
+  return '/media/' + fid;
+}
+function splitTts(text, max = 180) {
+  const parts = [];
+  for (const s of String(text || '').split(/(?<=[.!?;:\n])\s+/)) {
+    const t = s.trim();
+    if (!t) continue;
+    if (t.length <= max) { parts.push(t); continue; }
+    let cur = '';
+    for (const w of t.split(/\s+/)) {
+      if ((cur + ' ' + w).trim().length <= max) cur = (cur + ' ' + w).trim();
+      else { if (cur) parts.push(cur); cur = w; }
+    }
+    if (cur) parts.push(cur);
+  }
+  return parts.filter(Boolean).slice(0, 5);
+}
+// 🔊 דיבור לעברית (mp3 לדפדפן — בלי צורך ב-ffmpeg)
+async function ttsMp3Url(text) {
+  const clean = String(text || '').trim().slice(0, 900);
+  if (clean.length < 2) throw new Error('טקסט קצר מדי');
+  const bufs = [];
+  for (const p of splitTts(clean)) {
+    const r = await fetch('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=iw&q=' + encodeURIComponent(p),
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } });
+    if (!r.ok) throw new Error('TTS ' + r.status);
+    const b = Buffer.from(await r.arrayBuffer());
+    if (b.length < 500) throw new Error('TTS ריק');
+    bufs.push(b);
+  }
+  if (!bufs.length) throw new Error('TTS נכשל');
+  return saveSiteMedia(Buffer.concat(bufs), 'mp3');
+}
+const SITE_HELP = `🤖 *מולטי בוט — כל הפקודות (כמו בקבוצת וואטסאפ!)*
+
+כתוב עם ! בהתחלה, או תייג @מולטי בוט, או פשוט כתוב חופשי — אני מבין לבד.
+
+🎨 *יצירה:* תמונה · סטיקר (תיאור) · דבר (הקראה בקול)
+🎵 *מדיה:* שיר · וידאו · תמונות
+🌤️ *מידע חי:* מזג · חדשות · דולר · ביטקוין · שבת · מניה · מדד · קצר · רעידת-אדמה · זיהום-אוויר · תרגם
+😂 *כיף:* בדיחה · חידה · עובדה · מוטיבציה · סיפור · מתכון · אימון · טיפ · ברכה · אימייל · סיכום · שכתוב · קוד · רעיון · חלום · מזל · מילון · מדינה
+🎲 *מהיר:* קוביה · מטבע · בחר · הגרלה · סיסמה · מספר · צבע · תאריך · שעה · עד
+🐶 *חיות:* כלב · חתול · שועל
+🛒 *קניות:* קנה · 🔳 *ברקוד:* qr
+💬 *צ'אט:* סכם-צאט · עזרה · מצב · או פשוט שאל כל שאלה!
+
+🎤 *טיפ:* שלח הקלטה קולית — אתמלל ואענה!
+📞 *טיפ 2:* לחץ 📞 לשיחה קולית חיה בעברית.`;
+function siteUsage(cmd) {
+  const U = {
+    'תמונה': '🎨 תאר מה ליצור. דוגמה: !תמונה חתול אסטרונאוט',
+    'שיר': '🎵 כתוב שם שיר + זמר. דוגמה: !שיר עומר אדם',
+    'וידאו': '🎬 כתוב נושא. דוגמה: !וידאו איך מכינים חומוס',
+    'דבר': '🔊 כתוב טקסט להקראה. דוגמה: !דבר שלום לכולם',
+    'תמונות': '🖼️ כתוב נושא לחיפוש תמונות אמיתיות.',
+    'תרגם': '🌍 כתוב טקסט לתרגום (עברית↔אנגלית).',
+    'מזג': '🌤️ כתוב עיר. דוגמה: !מזג תל אביב',
+    'qr': '🔳 כתוב טקסט/קישור לברקוד.',
+    'שבת': '🕯️ עיר אופציונלית. דוגמה: !שבת ירושלים',
+    'מניה': '📈 סימול, למשל: !מניה AAPL',
+    'מדד': '📊 זהב / נפט / נסדאק / s&p (ריק = TA-35 + S&P500)',
+    'קצר': '🔗 הדבק קישור ארוך לקיצור.',
+    'סיפור': '📖 כתוב נושא לסיפור.',
+    'מתכון': '🍳 כתוב שם מנה.',
+    'ברכה': '💌 כתוב לאיזה אירוע.',
+    'אימייל': '📧 כתוב נושא למייל.',
+    'סיכום': '📝 הדבק טקסט לסיכום.',
+    'שכתוב': '✍️ הדבק טקסט לניסוח מחדש.',
+    'קוד': '💻 תאר מה לתכנת.',
+    'רעיון': '🌟 כתוב נושא.',
+    'חלום': '🌙 תאר חלום.',
+    'מזל': '🔮 כתוב מזל (אריה, בתולה...).',
+    'מילון': '📖 כתוב מילה.',
+    'מדינה': '🌍 כתוב שם מדינה.',
+    'בחר': '🎲 כתוב אפשרויות עם | ביניהן.',
+    'הגרלה': '🎲 כתוב שמות מופרדים בפסיק.',
+    'סיסמה': '🔑 אורך אופציונלי (ברירת מחדל 12).',
+    'מספר': '🔢 אופציונלי: מינימום מקסימום.',
+    'שעה': '🕐 עיר (ירושלים, לונדון, ניו יורק...).',
+    'עד': '⏳ תאריך, למשל: !עד 25.12.2026',
+    'קוביה': '🎲 מספר פאות אופציונלי.',
+    'קנה': '🛒 כתוב מוצר לחיפוש באליאקספרס.',
+    'סטיקר': '⭐ תאר סטיקר ליצירה.',
+  };
+  return U[cmd] || null;
+}
+// מחזיר true אם ענה (גם אם רק הסבר שימוש)
+async function siteAnswer(job, histArr) {
+  let t = String(job.text || '').trim().slice(0, 500);
+  if (!t) return false;
+  t = t.replace(/^!\s*/, '').replace(/^@מולטי בוט\s*/, '').trim();
+  if (!t) return false;
+  try { t = normalizeNaturalCommand(t) || t; } catch {}
+  let line = t;
+  const first = (t.split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
+  if (!KNOWN_FIRST.has(first) && t.length <= 300) {
+    try {
+      line = await Promise.race([
+        aiRouteCommand(t, histArr || []),
+        new Promise((res) => setTimeout(() => res(t), 20000)),
+      ]) || t;
+    } catch { line = t; }
+  }
+  const sp = line.indexOf(' ');
+  const cmd = (sp === -1 ? line : line.slice(0, sp)).trim();
+  const q = (sp === -1 ? '' : line.slice(sp + 1)).trim().slice(0, 500);
+  const say = (text, media) => {
+    rr2push(job.roomId, {
+      id: `m${++msgSeq}-${Date.now().toString(36)}`, from: BOT_NAME,
+      text: String(text || '').slice(0, 2000), at: Date.now(), ...(media ? { media } : {}),
+    });
+  };
+  const needQ = () => {
+    const u = siteUsage(cmd);
+    say(u || '❓ חסר טקסט. כתוב !עזרה לרשימת הפקודות.');
+    return true;
+  };
+  const aiRace = (p) => Promise.race([chatAI(p, []), new Promise((res) => setTimeout(() => res(null), 25000))]);
+  try {
+    // 🎨 תמונה
+    if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      const { buffer } = await Promise.race([
+        generateImage(q.slice(0, 300)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('img-timeout')), 120000)),
+      ]);
+      if (buffer && buffer.length > 5000) {
+        say(q.slice(0, 200), { url: saveSiteMedia(buffer, 'jpg'), kind: 'image' });
+      } else say('😢 יצירת התמונה נכשלה — נסה תיאור אחר.');
+      return true;
+    }
+    // ⭐ סטיקר מתיאור
+    if (['סטיקר', 'מדבקה', 'sticker'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      try {
+        const { generateStickerImage } = await import('./ai-image.js');
+        const { buffer } = await Promise.race([
+          generateStickerImage(q.slice(0, 200)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('img-timeout')), 120000)),
+        ]);
+        if (buffer && buffer.length > 3000) say('⭐ הסטיקר שלך:', { url: saveSiteMedia(buffer, 'png'), kind: 'image' });
+        else say('😢 יצירת הסטיקר נכשלה — נסה תיאור אחר.');
+      } catch { say('😢 יצירת הסטיקר נכשלה כרגע.'); }
+      return true;
+    }
+    // 🎵🎬 שיר / וידאו
+    if (['שיר', 'מוזיקה', 'נגן', 'song', 'music'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      const res = await searchYouTube(q, 3);
+      say(formatMediaResults(res, '🎵'));
+      return true;
+    }
+    if (['וידאו', 'סרטון', 'סרטונים', 'יוטיוב', 'video'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      const res = await searchYouTube(q, 3);
+      say(formatMediaResults(res, '🎬'));
+      return true;
+    }
+    // 🔊 דיבור
+    if (['דבר', 'קול', 'קריין', 'תקריא', 'say', 'speak'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      try {
+        const url = await ttsMp3Url(q);
+        say('🔊 ' + q.slice(0, 200), { url, kind: 'audio' });
+      } catch { say('😢 ההקראה נכשלה כרגע — נסה טקסט קצר יותר.'); }
+      return true;
+    }
+    // 🖼️ תמונות אמיתיות
+    if (['תמונות', 'images'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      const imgs = await searchImages(q, 3);
+      if (!imgs.length) { say('😢 לא מצאתי תמונות — נסה ניסוח אחר.'); return true; }
+      say('🖼️ *מצאתי:* ' + imgs.map((r) => r.page || r.url).join('\n'), { url: imgs[0].url, kind: 'image' });
+      return true;
+    }
+    // 🌍 תרגום
+    if (['תרגם', 'תרגום', 'translate'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      say(await translateText(q));
+      return true;
+    }
+    // 🌤️ מזג
+    if (['מזג', 'מזגאוויר', 'weather'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      try { say(await getWeather(q)); } catch (e) { say('😢 ' + (e.message || 'שגיאה').slice(0, 200)); }
+      return true;
+    }
+    if (cmd === 'חדשות' || cmd === 'news') { say(await newsHe(5)); return true; }
+    if (['דולר', 'מטבע-חוץ', 'יורו'].includes(cmd)) { say(await currencyRates()); return true; }
+    if (['ביטקוין', 'קריפטו', 'bitcoin', 'crypto'].includes(cmd)) { say(await cryptoPrices()); return true; }
+    if (cmd === 'שבת' || cmd === 'כניסת-שבת' || cmd === 'זמני-שבת') { say(await shabbatTimes(q || 'ירושלים')); return true; }
+    if (['מניה', 'מניות', 'stock'].includes(cmd)) {
+      if (q.length < 1) return needQ();
+      say(await stockPrice(resolveIndexSymbol(q) || q));
+      return true;
+    }
+    if (['מדד', 'מדדים', 'index'].includes(cmd)) { say(await stockPrice(resolveIndexSymbol(q || 'TA-35') || 'TA-35')); return true; }
+    if (['קצר', 'קיצור', 'קצר-קישור', 'short'].includes(cmd)) {
+      if (q.length < 4) return needQ();
+      say(await shortenUrl(q));
+      return true;
+    }
+    if (['רעידת-אדמה', 'רעידות'].includes(cmd)) { say(await earthquakes(q)); return true; }
+    if (['זיהום-אוויר', 'זיהום', 'AQI'].includes(cmd)) { say(await airQuality(q)); return true; }
+    // 🔳 ברקוד
+    if (['qr', 'ברקוד', 'קיואר'].includes(cmd)) {
+      if (q.length < 1) return needQ();
+      try {
+        const { default: QRCode } = await import('qrcode');
+        const buf = await QRCode.toBuffer(q.slice(0, 500), { width: 600, margin: 2 });
+        say('🔳 הברקוד שלך:', { url: saveSiteMedia(buf, 'png'), kind: 'image' });
+      } catch { say('😢 יצירת הברקוד נכשלה.'); }
+      return true;
+    }
+    // 🎲 מהיר (סינכרוני)
+    if (cmd === 'קוביה') { say(dice(Math.min(1000, Math.max(2, parseInt(q) || 6)))); return true; }
+    if (cmd === 'מטבע') { say(coin()); return true; }
+    if (cmd === 'בחר' || cmd === 'הגרלה') {
+      if (q.length < 2) return needQ();
+      say(pickOne(q));
+      return true;
+    }
+    if (cmd === 'סיסמה') { say(genPassword(Math.min(64, Math.max(4, parseInt(q) || 12)))); return true; }
+    if (cmd === 'מספר') {
+      const nums = (q.match(/-?\d+/g) || []).map(Number);
+      say(nums.length >= 2 ? randNum(nums[0], nums[1]) : randNum());
+      return true;
+    }
+    if (cmd === 'צבע') { say(randColor()); return true; }
+    if (cmd === 'תאריך') { say(dateHe()); return true; }
+    if (cmd === 'שעה') { say(cityTime(q || 'ירושלים')); return true; }
+    if (cmd === 'עד') {
+      if (q.length < 4) return needQ();
+      say(countdown(q));
+      return true;
+    }
+    // 🐶 חיות
+    if (['כלב', 'dog'].includes(cmd) || ['חתול', 'cat'].includes(cmd) || ['שועל', 'fox'].includes(cmd)) {
+      const kind = ['כלב', 'dog'].includes(cmd) ? 'dog' : (['חתול', 'cat'].includes(cmd) ? 'cat' : 'fox');
+      try {
+        const { imageUrl, caption } = await animalImage(kind);
+        say('🐶 ' + caption, { url: imageUrl, kind: 'image' });
+      } catch { say('😢 לא מצאתי תמונה כרגע.'); }
+      return true;
+    }
+    // 🛒 קניות
+    if (['קנה', 'קניות', 'קנייה', 'קני', 'aliexpress', 'ali'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      try {
+        const items = await searchProducts(q, 5);
+        say('🛒 *מצאתי באליאקספרס:*\n\n' + items.map((p, i) =>
+          `${i + 1}. *${p.title}*\n💰 ${p.price}\n🔗 ${affiliateUrl(p.url)}`).join('\n\n'));
+      } catch (e) { say('😢 ' + (e.message || 'החיפוש נכשל').slice(0, 200)); }
+      return true;
+    }
+    // 💬 סיכום צ'אט החדר
+    if (cmd === 'סכם-צאט' || cmd === 'סיכום-יום' || cmd === 'יומן-יום') {
+      const lines = (getRoom(job.roomId).hist || []).slice(-50).map((h) => `${h.from}: ${(h.text || '').slice(0, 200)}`).filter((s) => s.length > 3);
+      if (lines.length < 3) { say('אין מספיק הודעות לסיכום עדיין 🙂'); return true; }
+      const res = await aiRace(`סכם בעברית ב-5 נקודות את השיחה הבאה:\n${lines.join('\n').slice(0, 3000)}`);
+      say(((res && res.text) || 'לא הצלחתי לסכם כרגע.').trim().slice(0, 1500));
+      return true;
+    }
+    // 📖 עזרה / מצב
+    if (['עזרה', 'מדריך', 'תפריט', 'help'].includes(cmd)) { say(SITE_HELP); return true; }
+    if (['מצב', 'status'].includes(cmd)) {
+      const { config } = await import('./config.js');
+      say(`🤖 *מצב מנועים:*\nOpenAI=${config.OPENAI_API_KEY ? 'ON' : 'off'} · Groq=${config.GROQ_API_KEY ? 'ON' : 'off'} · Gemini=${config.GEMINI_API_KEY ? 'ON' : 'off'} · Pollinations=ON ✅\n\nכתוב !עזרה לרשימת הפקודות.`);
+      return true;
+    }
+    if (['שאל', 'ai', 'gpt', "צ'אט", 'בוט'].includes(cmd)) {
+      if (q.length < 2) return needQ();
+      job.text = q;
+      return false; // לצ'אט הרגיל
+    }
+    // ✨ כלי AI
+    const tool = resolveAiTool(cmd);
+    if (tool) {
+      try {
+        const out = await Promise.race([
+          runAiTool(tool, q),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('ai-timeout')), 30000)),
+        ]);
+        say((out || '').trim().slice(0, 1500) || 'לא הצלחתי כרגע, נסה שוב.');
+      } catch (e) {
+        if (e && e.message === 'EMPTY') return needQ();
+        say('😢 נכשל כרגע — נסה שוב בעוד רגע.');
+      }
+      return true;
+    }
+    // פיצ'רים קבוצתיים של וואטסאפ (דורשים קבוצה אמיתית)
+    if (['טריוויה', 'איקס-עיגול', 'מילים-מעורבבות', 'אמת-או-חובה', 'מלחמת-משפטים', 'סקר', 'תורנות', 'מעקב', 'בוקר', 'בריף', 'יומולדת', 'אירועים', 'טופ', 'נקודות', 'תמלל', 'חתוך', 'מי-שמר-אותי', 'אתר', 'רקע', 'תמונת-פרופיל', 'פרופיל'].includes(cmd)) {
+      say('ℹ️ הפיצ׳ר הזה חי בקבוצת הוואטסאפ (משחקים, סקרים, תזכורות...).\nכאן באתר אפשר: תמונה · שיר · וידאו · דבר · מזג · חדשות · כלי AI · ועוד — כתוב !עזרה.');
+      return true;
+    }
+  } catch (e) {
+    console.warn('siteAnswer err:', (e && e.message || '').slice(0, 120));
+    return false;
+  }
+  return false;
+}
+
+// 🎤 הודעה קולית מהאתר → תמלול → תשובת הבוט (+הקראה חוזרת)
+const botVoiceQueue = [];
+async function botVoice(roomId, mediaUrl, from) {
+  botVoiceQueue.push({ roomId, voiceUrl: mediaUrl, from });
+  pumpBotVoice().catch(() => {});
+}
+async function pumpBotVoice() {
+  if (pumpBotVoice.run) return;
+  const job = botVoiceQueue.shift();
+  if (!job) return;
+  pumpBotVoice.run = true;
+  try {
+    for (;;) {
+      const job = botVoiceQueue.shift();
+      if (!job) break;
+      try {
+        roomCast(job.roomId, { t: 'typing', from: BOT_NAME, room: job.roomId });
+        const fp = path.join(DIR, 'site', String(job.voiceUrl || '').replace(/^\/media\//, ''));
+        if (fp.includes('..')) continue;
+        const buf = await fs.promises.readFile(fp);
+        const heard = await transcribeAudio(buf.slice(0, 8 * 1024 * 1024), 'voice.webm');
+        if (!heard || heard.trim().length < 2) {
+          rr2push(job.roomId, { id: `m${++msgSeq}-${Date.now().toString(36)}`, from: BOT_NAME, text: '😢 לא שמעתי טוב — נסה להקליט שוב.', at: Date.now() });
+          continue;
+        }
+        botAsk(job.roomId, heard.slice(0, 500), job.from).catch(() => {});
+      } catch (e) {
+        console.warn('voice fail:', (e && e.message || '').slice(0, 100));
+        rr2push(job.roomId, { id: `m${++msgSeq}-${Date.now().toString(36)}`, from: BOT_NAME, text: '😢 התמלול נכשל כרגע (צריך מפתח Groq בשרת).', at: Date.now() });
+      }
+    }
+  } finally {
+    pumpBotVoice.run = false;
+    if (botVoiceQueue.length) pumpBotVoice().catch(() => {});
+  }
+}
+
 function statusPub(x) {
   return { id: x.id, from: x.from, kind: x.kind, text: x.text, img: x.img, bg: x.bg, at: x.at, views: (x.views || []).length };
 }
@@ -328,7 +671,8 @@ function handleFrame(ws, state, text) {
     }
     if (name.includes('מולטי בוט')) { wsSend(ws, { t: 'err', msg: 'השם הזה שמור לבוט 🤖' }); return; }
     const rid = (m.room && rooms.has(m.room)) ? m.room : 'general';
-    const avatar = ['photo', 'init', 'none'].includes(m.avatar) ? m.avatar : 'photo';
+    const avRaw = String(m.avatar || 'photo');
+    const avatar = (['photo', 'init', 'none'].includes(avRaw) || (avRaw.startsWith('/media/') && avRaw.length < 140)) ? avRaw : 'photo';
     const about = cleanContact(m.about).slice(0, 80);
     clients.set(ws, {
       name, phone: cleanContact(m.phone), email: cleanContact(m.email),
@@ -405,7 +749,6 @@ function handleFrame(ws, state, text) {
     }
     if (!txt && !media) return;
     st.lastMsg = now;
-    st.lastMsg = now;
     const expH = [24, 168, 2160].includes(Number(m.exp)) ? Number(m.exp) : 0;
     const item = { id: `m${++msgSeq}-${now.toString(36)}`, from: st.name, text: txt, at: now };
     if (media) item.media = media;
@@ -418,6 +761,10 @@ function handleFrame(ws, state, text) {
     if (rr.hist.length > MAX_HIST) rr.hist = rr.hist.slice(-MAX_HIST);
     saveHist();
     roomCast(st.room, { t: 'msg', ...item, room: st.room });
+    if (media && media.kind === 'audio' && media.url) {
+      botVoice(st.room, media.url, st.name).catch(() => {});
+      return;
+    }
     if (txt.includes('מולטי בוט') || txt.startsWith('!')) {
       botAsk(st.room, txt.replace(/^!/, '').trim() || txt, st.name).catch(() => {});
     }
@@ -432,7 +779,7 @@ function handleFrame(ws, state, text) {
     if (m.phone !== undefined) st.phone = cleanContact(m.phone);
     if (m.email !== undefined) st.email = cleanContact(m.email);
     if (m.about !== undefined) st.about = cleanContact(m.about).slice(0, 80);
-    if (['photo', 'init', 'none'].includes(m.avatar)) st.avatar = m.avatar;
+    if (typeof m.avatar === 'string' && (['photo', 'init', 'none'].includes(m.avatar) || (m.avatar.startsWith('/media/') && m.avatar.length < 140))) st.avatar = m.avatar;
     broadcastUsers();
     return;
   }
