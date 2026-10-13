@@ -666,8 +666,12 @@ function handleFrame(ws, state, text) {
     if (st) return;
     const name = cleanName(m.name);
     if (!validName(name)) { wsSend(ws, { t: 'err', msg: 'שם לא תקין (2-20 תווים: עברית/אנגלית/ספרות)' }); return; }
-    for (const c of clients.values()) {
-      if (c.name === name) { wsSend(ws, { t: 'err', msg: 'השם תפוס, בחר שם אחר' }); return; }
+    for (const [w, c] of clients) {
+      if (c.name === name) {
+        // רענון דף: החיבור הישן מת או מאותו IP — מחליפים אוטומטית
+        if (w.destroyed || c.ip === state.ip) { try { w.destroy(); } catch {} clients.delete(w); break; }
+        wsSend(ws, { t: 'err', msg: 'השם תפוס, בחר שם אחר' }); return;
+      }
     }
     if (name.includes('מולטי בוט')) { wsSend(ws, { t: 'err', msg: 'השם הזה שמור לבוט 🤖' }); return; }
     const rid = (m.room && rooms.has(m.room)) ? m.room : 'general';

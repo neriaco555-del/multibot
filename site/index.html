@@ -650,6 +650,7 @@ header .hic .ic{ width:23px; height:23px; }
   const $ = (id) => document.getElementById(id);
   const msgs = $('msgs'), inp = $('inp'), users = $('users');
   let ws = null, me = '', typingT = null, typingUsers = new Map(), lastUsers = [], allHist = [];
+  let autoJoin = false, autoTries = 0;
   let curRoom = 'general', lastAll = [], lastRooms = [], lastStatuses = [], dirTab = 'room', pendingRoom = null;
   const roomNames = { general: 'כללי' };
   try { const q = new URLSearchParams(location.search).get('room'); if (q) pendingRoom = q; } catch {}
@@ -963,6 +964,7 @@ header .hic .ic{ width:23px; height:23px; }
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'ok') {
         me = m.you;
+        autoJoin = false; autoTries = 0;
         localStorage.setItem('mb-site', JSON.stringify({ name: $('jname').value.trim(), phone: $('jphone').value.trim(), email: $('jemail').value.trim() }));
         $('join').style.display = 'none';
         send({ t:'presence', mode: S.presence || 'all' });
@@ -985,6 +987,11 @@ header .hic .ic{ width:23px; height:23px; }
       } else if (m.t === 'err') {
         if ($('join').style.display !== 'none') { $('jerr').textContent = m.msg; }
         else { flashErr(m.msg); }
+        // התחברות אוטומטית נתקלה בשם תפוס (רפאים אחרי רענון) — ניסיון חוזר
+        if (autoJoin && /תפוס/.test(m.msg || '') && autoTries < 6) {
+          autoTries++;
+          setTimeout(() => { try { if (!me) connect(); } catch {} }, 4000);
+        } else if (/תפוס/.test(m.msg || '')) { autoJoin = false; }
       } else if (m.t === 'msg') addMsg(m);
       else if (m.t === 'hist') (m.items || []).forEach(addMsg);
       else if (m.t === 'users') {
@@ -1141,6 +1148,7 @@ header .hic .ic{ width:23px; height:23px; }
     if (!typingT || now - typingT > 3000) { typingT = now; send({ t:'typing' }); }
   });
   $('jgo').onclick = () => {
+    autoJoin = false;
     $('jerr').textContent = '';
     if ($('jname').value.trim().length < 2) { $('jerr').textContent = 'כתוב שם (2 תווים לפחות)'; return; }
     connect();
@@ -2059,7 +2067,7 @@ header .hic .ic{ width:23px; height:23px; }
   // התחברות אוטומטית עם השם השמור (הצ'אטים נשמרים בשרת ונטענים מחדש)
   try {
     if (saved.name && saved.name.trim().length >= 2) {
-      setTimeout(() => { try { if (!me) connect(); } catch {} }, 500);
+      setTimeout(() => { try { if (!me) { autoJoin = true; autoTries = 0; connect(); } } catch {} }, 500);
     }
   } catch {}
 })();
