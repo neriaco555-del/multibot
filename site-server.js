@@ -1330,6 +1330,22 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ online: clients.size, rooms: roomsList() }));
       return;
     }
+    if (u.pathname === '/api/tts' && req.method === 'GET') {
+      // הקראת טקסט בעברית (mp3) — גיבוי למכשירים בלי קול עברי
+      try {
+        const text = (u.searchParams.get('text') || '').slice(0, 300);
+        if (text.trim().length < 2) throw new Error('empty');
+        const url = await ttsMp3Url(text);
+        const fp = path.join(DIR, 'site', url.replace(/^\/media\//, ''));
+        const data = await fs.promises.readFile(fp);
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=3600' });
+        res.end(data);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false }));
+      }
+      return;
+    }
     let p = u.pathname === '/' ? '/index.html' : u.pathname;
     if (p.includes('..')) { res.writeHead(400); res.end(); return; }
     const fp = path.join(DIR, 'site', p);
