@@ -95,6 +95,7 @@ header .hic{ font-size:21px; cursor:pointer; }
 #join p.sub{ color:var(--muted); font-size:13.5px; margin:6px 0 16px; }
 #join input{ width:100%; margin:7px 0; padding:13px 16px; border-radius:40px; border:0; background:var(--input-bg); color:var(--content); font-size:15px; font-family:inherit; outline:none; }
 #join button.go{ width:100%; margin-top:14px; padding:14px; border:0; border-radius:40px; background:var(--kPrimary); color:#fff; font-size:16px; font-weight:600; cursor:pointer; font-family:inherit; }
+#join .tabs{ margin:2px 0 4px; }
 #join .hint{ font-size:12px; color:var(--muted); margin-top:12px; }
 #join .err{ color:var(--kErr); font-size:13px; min-height:18px; }
 #lock .card{ position:absolute; inset:0; margin:auto; height:fit-content; width:min(90vw,320px); background:var(--bg); border-radius:24px; padding:26px 22px; text-align:center; }
@@ -635,13 +636,22 @@ header .hic .ic{ width:23px; height:23px; }
   <div class="card">
     <img src="assets/welcome_image.png" class="wimg" onerror="this.style.display='none'">
     <h2>מולטי בוט 🌐</h2>
-    <p class="sub">צ'אט הקהילה — נכנסים עם שם ומתחילים לדבר</p>
+    <p class="sub">צ'אט הקהילה — מתחברים עם חשבון אישי</p>
+    <div class="tabs" id="authtabs"><button id="tablogin" class="on">התחברות</button><button id="tabreg">צור חשבון</button></div>
     <div class="err" id="jerr"></div>
-    <input id="jname" placeholder="השם שלך *" maxlength="20">
-    <input id="jphone" placeholder="טלפון (לא חובה)" maxlength="20" inputmode="tel">
-    <input id="jemail" placeholder="מייל (לא חובה)" maxlength="60" inputmode="email">
-    <button class="go" id="jgo">הצטרפות לצ'אט</button>
-    <div class="hint">בלי סיסמה ובלי הרשמה מסובכת — רק שם.</div>
+    <div id="pane-login">
+      <input id="jname" placeholder="שם משתמש *" maxlength="20" autocomplete="username">
+      <input id="jpass" type="password" placeholder="סיסמה *" maxlength="64" autocomplete="current-password">
+      <button class="go" id="jgo">התחברות</button>
+      <div class="hint">נכנסים עם שם משתמש וסיסמה.</div>
+    </div>
+    <div id="pane-reg" style="display:none">
+      <input id="rname" placeholder="שם משתמש *" maxlength="20" autocomplete="username">
+      <input id="rpass" type="password" placeholder="סיסמה (4 תווים לפחות) *" maxlength="64" autocomplete="new-password">
+      <input id="rpass2" type="password" placeholder="אימות סיסמה *" maxlength="64" autocomplete="new-password">
+      <button class="go" id="rgo">צור חשבון</button>
+      <div class="hint">חשבון חדש עם שם משתמש וסיסמה.</div>
+    </div>
     <a class="dl" href="https://github.com/neriaco555-del/multibot/releases/latest/download/multibot.apk">📲 להורדת האפליקציה לטלפון</a>
   </div>
 </div>
@@ -676,9 +686,20 @@ header .hic .ic{ width:23px; height:23px; }
   }
   // ===== עזר =====
   const saved = JSON.parse(localStorage.getItem('mb-site') || '{}');
-  if (saved.name) $('jname').value = saved.name;
-  if (saved.phone) $('jphone').value = saved.phone;
-  if (saved.email) $('jemail').value = saved.email;
+  if (saved.name) { $('jname').value = saved.name; $('rname').value = saved.name; }
+  let pendingAuth = null, authMode = 'login';
+  $('tablogin').onclick = () => {
+    authMode = 'login';
+    $('tablogin').classList.add('on'); $('tabreg').classList.remove('on');
+    $('pane-login').style.display = ''; $('pane-reg').style.display = 'none';
+    $('jerr').textContent = '';
+  };
+  $('tabreg').onclick = () => {
+    authMode = 'register';
+    $('tabreg').classList.add('on'); $('tablogin').classList.remove('on');
+    $('pane-reg').style.display = ''; $('pane-login').style.display = 'none';
+    $('jerr').textContent = '';
+  };
   function esc(s){ return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function hh(ts){ const d = new Date(ts); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
   // Markdown על טקסט שכבר הוגן: *מודגש* _נטוי_ ~חוצה~ `קוד`
@@ -957,15 +978,20 @@ header .hic .ic{ width:23px; height:23px; }
   function connect(){
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onopen = () => {
-      const name = $('jname').value.trim(), phone = $('jphone').value.trim(), email = $('jemail').value.trim();
-      if (name) ws.send(JSON.stringify({ t:'join', name, phone, email, avatar:S.avatar || 'photo', about:S.about || '' }));
+      const a = pendingAuth;
+      if (!a || !a.name) return;
+      const o = { t: 'join', name: a.name, avatar: S.avatar || 'photo', about: S.about || '' };
+      if (a.token) o.token = a.token;
+      else { o.pass = a.pass || ''; o.mode = a.mode || 'login'; }
+      if (pendingRoom) o.room = pendingRoom;
+      ws.send(JSON.stringify(o));
     };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'ok') {
         me = m.you;
         autoJoin = false; autoTries = 0;
-        localStorage.setItem('mb-site', JSON.stringify({ name: $('jname').value.trim(), phone: $('jphone').value.trim(), email: $('jemail').value.trim() }));
+        try { localStorage.setItem('mb-site', JSON.stringify({ name: m.you, token: m.token || '' })); } catch {}
         $('join').style.display = 'none';
         send({ t:'presence', mode: S.presence || 'all' });
         if (m.rooms) setRooms(m.rooms);
@@ -985,13 +1011,9 @@ header .hic .ic{ width:23px; height:23px; }
         renderUsers(lastUsers);
         renderRooms();
       } else if (m.t === 'err') {
+        autoJoin = false;
         if ($('join').style.display !== 'none') { $('jerr').textContent = m.msg; }
         else { flashErr(m.msg); }
-        // התחברות אוטומטית נתקלה בשם תפוס (רפאים אחרי רענון) — ניסיון חוזר
-        if (autoJoin && /תפוס/.test(m.msg || '') && autoTries < 6) {
-          autoTries++;
-          setTimeout(() => { try { if (!me) connect(); } catch {} }, 4000);
-        } else if (/תפוס/.test(m.msg || '')) { autoJoin = false; }
       } else if (m.t === 'msg') addMsg(m);
       else if (m.t === 'hist') (m.items || []).forEach(addMsg);
       else if (m.t === 'users') {
@@ -1150,10 +1172,27 @@ header .hic .ic{ width:23px; height:23px; }
   $('jgo').onclick = () => {
     autoJoin = false;
     $('jerr').textContent = '';
-    if ($('jname').value.trim().length < 2) { $('jerr').textContent = 'כתוב שם (2 תווים לפחות)'; return; }
+    const name = $('jname').value.trim(), pass = $('jpass').value;
+    if (name.length < 2) { $('jerr').textContent = 'כתוב שם משתמש (2 תווים לפחות)'; return; }
+    if (!pass) { $('jerr').textContent = 'הכנס סיסמה'; return; }
+    pendingAuth = { mode: 'login', name, pass };
+    connect();
+  };
+  $('rgo').onclick = () => {
+    autoJoin = false;
+    $('jerr').textContent = '';
+    const name = $('rname').value.trim(), p1 = $('rpass').value, p2 = $('rpass2').value;
+    if (name.length < 2) { $('jerr').textContent = 'כתוב שם משתמש (2 תווים לפחות)'; return; }
+    if (p1.length < 4) { $('jerr').textContent = 'סיסמה חייבת 4 תווים לפחות'; return; }
+    if (p1 !== p2) { $('jerr').textContent = 'אימות הסיסמה לא תואם — בדוק שוב'; return; }
+    pendingAuth = { mode: 'register', name, pass: p1 };
     connect();
   };
   $('jname').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('jgo').click(); });
+  $('jpass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('jgo').click(); });
+  $('rname').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rgo').click(); });
+  $('rpass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rgo').click(); });
+  $('rpass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rgo').click(); });
   $('msearch').addEventListener('input', () => renderUsers(lastUsers));
   // חיפוש בהודעות
   $('searchBtn').onclick = () => {
@@ -1273,6 +1312,7 @@ header .hic .ic{ width:23px; height:23px; }
   function fmtT(s){ return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
   function startCall(video) {
     if (call) { endCall(); return; }
+    try { loadHeVoices(); } catch {}
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       // אין זיהוי קולי (WebView/אפליקציה) — מצב לחץ-ודבר: מקליט, שולח, הבוט עונה בקול
@@ -1333,6 +1373,7 @@ header .hic .ic{ width:23px; height:23px; }
   // 🎤 לחץ-ודבר למכשירים בלי זיהוי קולי: הקלטה → שליחה → הבוט מתמלל ועונה בקול
   async function startPtRec() {
     if (!call || !call.pt) return;
+    if (call.ptRec && call.ptRec.state !== 'inactive') return;
     if (!navigator.mediaDevices || !window.MediaRecorder) { endCall(); flashErr('אין הקלטה במכשיר הזה'); return; }
     try {
       const st = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1362,17 +1403,34 @@ header .hic .ic{ width:23px; height:23px; }
     msgs.appendChild(row);
     msgs.scrollTop = msgs.scrollHeight;
   }
+  let heVoices = [];
+  function loadHeVoices() {
+    try {
+      heVoices = speechSynthesis.getVoices().filter((v) => ((v.lang || '').toLowerCase().startsWith('he')));
+      heVoices.sort((a, b) => ((/google|microsoft|natural/i.test(b.name || '') ? 1 : 0) - (/google|microsoft|natural/i.test(a.name || '') ? 1 : 0)));
+    } catch { heVoices = []; }
+  }
+  try { loadHeVoices(); speechSynthesis.onvoiceschanged = loadHeVoices; } catch {}
+  function ptNext() {
+    // באפליקציה: אחרי שהבוט סיים לדבר — מקליטים שוב אוטומטית (שיחה רציפה)
+    if (call && call.pt && call.auto !== false) {
+      setTimeout(() => { try { if (call && call.pt) startPtRec(); } catch {} }, 900);
+    }
+  }
   function speakBot(text) {
     if (!call || !call.speaker) return;
     try {
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(String(text).slice(0, 300));
+      const clean = String(text || '').replace(/[*_`#>]/g, '').trim().slice(0, 300);
+      if (clean.length < 2) { ptNext(); return; }
+      const u = new SpeechSynthesisUtterance(clean);
       u.lang = 'he-IL';
-      const vs = speechSynthesis.getVoices().filter((v) => (v.lang || '').startsWith('he'));
-      if (vs[0]) u.voice = vs[0];
-      u.rate = 1;
+      if (heVoices[0]) u.voice = heVoices[0];
+      u.rate = 0.95;
+      u.onend = () => ptNext();
+      u.onerror = () => ptNext();
       speechSynthesis.speak(u);
-    } catch {}
+    } catch { ptNext(); }
   }
   function endCall() {
     if (!call) return;
@@ -2064,10 +2122,10 @@ header .hic .ic{ width:23px; height:23px; }
   // ===== אתחול =====
   applyS();
   bootLock().then(() => {});
-  // התחברות אוטומטית עם השם השמור (הצ'אטים נשמרים בשרת ונטענים מחדש)
+  // התחברות אוטומטית עם הטוקן השמור (הצ'אטים נשמרים בשרת ונטענים מחדש)
   try {
-    if (saved.name && saved.name.trim().length >= 2) {
-      setTimeout(() => { try { if (!me) { autoJoin = true; autoTries = 0; connect(); } } catch {} }, 500);
+    if (saved.name && saved.token) {
+      setTimeout(() => { try { if (!me) { autoJoin = true; autoTries = 0; pendingAuth = { name: saved.name, token: saved.token }; connect(); } } catch {} }, 500);
     }
   } catch {}
 })();

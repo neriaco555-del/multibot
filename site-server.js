@@ -71,13 +71,86 @@ setInterval(() => {
   } catch {}
 }, 600000).unref?.();
 const META_FILE = new URL('./site-meta.json', import.meta.url);
-let meta = { pins: {} }; // roomId -> {id, text, from, at}
+let meta = { pins: {}, points: {}, rota: { members: [], idx: 0 } }; // roomId -> {id, text, from, at}
 try {
   const d = JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
-  if (d && typeof d === 'object') meta = { pins: (d.pins || (d.pinned ? { general: d.pinned } : {})) };
+  if (d && typeof d === 'object') meta = {
+    pins: (d.pins || (d.pinned ? { general: d.pinned } : {})),
+    points: (d.points && typeof d.points === 'object') ? d.points : {},
+    rota: (d.rota && typeof d.rota === 'object') ? { members: Array.isArray(d.rota.members) ? d.rota.members.slice(0, 50) : [], idx: Number(d.rota.idx) || 0 } : { members: [], idx: 0 },
+  };
 } catch {}
 function saveMeta() {
   try { fs.writeFileSync(META_FILE, JSON.stringify(meta)); } catch {}
+}
+let metaTimer = null;
+function saveMetaSoon() {
+  clearTimeout(metaTimer);
+  metaTimer = setTimeout(saveMeta, 3000);
+}
+// 🏆 ניקוד: נקודה להודעה (עד אחת לדקה)
+const pointAt = new Map();
+function addPoint(name) {
+  if (!name || name === BOT_NAME) return;
+  const now = Date.now();
+  if (now - (pointAt.get(name) || 0) < 60000) return;
+  pointAt.set(name, now);
+  meta.points[name] = (meta.points[name] || 0) + 1;
+  saveMetaSoon();
+}
+function addPoints(name, n) {
+  if (!name || name === BOT_NAME) return;
+  meta.points[name] = (meta.points[name] || 0) + n;
+  saveMetaSoon();
+}
+function topPoints(limit = 5) {
+  return Object.entries(meta.points).sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+// ---------- 🔐 חשבונות (שם + סיסמה, טוקן להתחברות אוטומטית) ----------
+const ACC_FILE = new URL('./site-accounts.json', import.meta.url);
+let accounts = { users: {}, tokens: {} };
+try {
+  const d = JSON.parse(fs.readFileSync(ACC_FILE, 'utf-8'));
+  if (d && typeof d === 'object') {
+    if (d.users && typeof d.users === 'object') accounts.users = d.users;
+    if (d.tokens && typeof d.tokens === 'object') accounts.tokens = d.tokens;
+  }
+} catch {}
+let accTimer = null;
+function saveAccounts() {
+  clearTimeout(accTimer);
+  accTimer = setTimeout(() => {
+    try { fs.writeFileSync(ACC_FILE, JSON.stringify(accounts)); } catch {}
+  }, 2000);
+}
+function hashPass(pass, salt) {
+  return 'scrypt:' + salt + ':' + crypto.scryptSync(String(pass), salt, 64).toString('hex');
+}
+function checkPass(pass, stored) {
+  try {
+    const [algo, salt, hex] = String(stored || '').split(':');
+    if (algo !== 'scrypt' || !salt || !hex) return false;
+    const h = crypto.scryptSync(String(pass), salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(h, 'hex'), Buffer.from(hex, 'hex'));
+  } catch { return false; }
+}
+function validPass(p) {
+  const s = String(p || '');
+  return s.length >= 4 && s.length <= 64;
+}
+function newToken() { return 'tk' + crypto.randomBytes(24).toString('hex'); }
+// הגבלת ניסיונות התחברות: 8 כשלונות ל-IP ב-5 דקות
+const loginFails = new Map();
+function loginBlocked(ip) {
+  const now = Date.now();
+  const arr = (loginFails.get(ip) || []).filter((t) => now - t < 5 * 60 * 1000);
+  loginFails.set(ip, arr);
+  return arr.length >= 8;
+}
+function loginFail(ip) {
+  const arr = loginFails.get(ip) || [];
+  arr.push(Date.now());
+  loginFails.set(ip, arr);
 }
 // ניקוי הודעות נעלמות כל דקה
 setInterval(() => {
@@ -355,7 +428,9 @@ const SITE_HELP = `🤖 *מולטי בוט — כל הפקודות (כמו בק�
 💬 *צ'אט:* סכם-צאט · עזרה · מצב · או פשוט שאל כל שאלה!
 
 🎤 *טיפ:* שלח הקלטה קולית — אתמלל ואענה!
-📞 *טיפ 2:* לחץ 📞 לשיחה קולית חיה בעברית.`;
+📞 *טיפ 2:* לחץ 📞 לשיחה קולית חיה בעברית.
+🎮 *משחקים:* טריוויה · איקס-עיגול (!xo מספר) · מילים-מעורבבות · אמת-או-חובה
+📊 *קבוצה:* סקר (שאלה | א | ב · הצבעה במספר) · תורנות · תזכורת · נקודות · טופ`;
 function siteUsage(cmd) {
   const U = {
     'תמונה': '🎨 תאר מה ליצור. דוגמה: !תמונה חתול אסטרונאוט',
@@ -598,8 +673,58 @@ async function siteAnswer(job, histArr) {
       }
       return true;
     }
-    // פיצ'רים קבוצתיים של וואטסאפ (דורשים קבוצה אמיתית)
-    if (['טריוויה', 'איקס-עיגול', 'מילים-מעורבבות', 'אמת-או-חובה', 'מלחמת-משפטים', 'סקר', 'תורנות', 'מעקב', 'בוקר', 'בריף', 'יומולדת', 'אירועים', 'טופ', 'נקודות', 'תמלל', 'חתוך', 'מי-שמר-אותי', 'אתר', 'רקע', 'תמונת-פרופיל', 'פרופיל'].includes(cmd)) {
+    // 🎮 משחקי קבוצה
+    if (cmd === 'טריוויה') { await cmdTrivia(job.roomId, job.from); return true; }
+    if (['נקודות'].includes(cmd)) { say(`🎖️ *${job.from}:* ${meta.points[job.from] || 0} נקודות`); return true; }
+    if (['טופ'].includes(cmd)) {
+      const top = topPoints(5);
+      say(top.length ? '🏆 *המובילים:*\n' + top.map(([n, c], i) => `${i + 1}. ${n} — ${c}`).join('\n') : '🏆 אין ניקוד עדיין — כתבו הודעות וצברו נקודות!');
+      return true;
+    }
+    if (cmd === 'סקר') { cmdPollCreate(job.roomId, job.from, q); return true; }
+    if (['סקר-תוצאות'].includes(cmd)) {
+      const p = roomPolls.get(job.roomId);
+      say(p ? pollText(p) : 'אין סקר פעיל. צור עם: !סקר שאלה | א | ב');
+      return true;
+    }
+    if (['סקר-סגור'].includes(cmd)) {
+      const p = roomPolls.get(job.roomId);
+      if (!p) { say('אין סקר פעיל.'); return true; }
+      roomPolls.delete(job.roomId);
+      say('📊 *תוצאות סופיות:*\n' + pollText(p));
+      return true;
+    }
+    if (cmd === 'תזכורת') { cmdRemind(job.roomId, job.from, q); return true; }
+    if (cmd === 'תזכורות') { cmdRemList(job.roomId, job.from); return true; }
+    if (['איקס-עיגול', 'xo'].includes(cmd) && !/^xo\s+\d/i.test(line)) { cmdXO(job.roomId, job.from, q); return true; }
+    if (/^xo\s+\d/i.test(line)) { cmdXOMove(job.roomId, job.from, parseInt(line.match(/\d+/)[0], 10)); return true; }
+    if (['אמת-או-חובה', 'truth'].includes(cmd)) {
+      const kind = /חובה/.test(q) ? 'd' : (/אמת/.test(q) ? 't' : (Math.random() < 0.5 ? 't' : 'd'));
+      say(kind === 't' ? `🫢 *אמת ל${job.from}:* ${TD_TRUTH[Math.floor(Math.random() * TD_TRUTH.length)]}` : `🔥 *חובה ל${job.from}:* ${TD_DARE[Math.floor(Math.random() * TD_DARE.length)]}`);
+      return true;
+    }
+    if (['מילים-מעורבבות', 'scramble'].includes(cmd)) { cmdScramble(job.roomId, job.from); return true; }
+    if (['תורנות'].includes(cmd)) {
+      const r = meta.rota;
+      const mm = q.match(/^(הוסף|הסר|הבא|נקה)\s*([\s\S]*)$/);
+      if (mm && mm[1] === 'הוסף' && mm[2].trim()) {
+        if (!r.members.includes(mm[2].trim().slice(0, 20))) r.members.push(mm[2].trim().slice(0, 20));
+        saveMetaSoon(); say('📋 נוסף לתורנות ✅');
+      } else if (mm && mm[1] === 'הסר' && mm[2].trim()) {
+        meta.rota.members = r.members.filter((x) => x !== mm[2].trim());
+        saveMetaSoon(); say('📋 הוסר מהתורנות.');
+      } else if (mm && mm[1] === 'הבא') {
+        if (!r.members.length) { say('אין תורנים — הוסף עם: !תורנות הוסף שם'); }
+        else { r.idx = (r.idx + 1) % r.members.length; saveMetaSoon(); say(`📋 התורן הבא: *${r.members[r.idx]}*`); }
+      } else if (mm && mm[1] === 'נקה') {
+        meta.rota = { members: [], idx: 0 }; saveMetaSoon(); say('📋 התורנות נוקתה.');
+      } else {
+        say(r.members.length ? `📋 *תורנות:*\n${r.members.map((m2, i) => `${i === (r.idx % r.members.length) ? '👉 ' : ''}${m2}`).join('\n')}\n\nהוסף: !תורנות הוסף שם` : '📋 אין תורנים. הוסף עם: !תורנות הוסף שם');
+      }
+      return true;
+    }
+    // פיצ'רים שדורשים קבוצת וואטסאפ אמיתית
+    if (['מלחמת-משפטים', 'מעקב', 'הסר-מעקב', 'בוקר', 'בריף', 'שערים-יומי', 'יומולדת', 'אירוע', 'אירועים', 'תמלל', 'חתוך', 'מי-שמר-אותי', 'אתר', 'אתרים', 'רקע', 'רקעים', 'תמונת-פרופיל', 'פרופיל', 'פעילות', 'יומן', 'אישיות'].includes(cmd)) {
       say('ℹ️ הפיצ׳ר הזה חי בקבוצת הוואטסאפ (משחקים, סקרים, תזכורות...).\nכאן באתר אפשר: תמונה · שיר · וידאו · דבר · מזג · חדשות · כלי AI · ועוד — כתוב !עזרה.');
       return true;
     }
@@ -647,6 +772,218 @@ async function pumpBotVoice() {
   }
 }
 
+/* ---------- 🎮 משחקי קבוצה + ניקוד + סקרים + תזכורות ---------- */
+const roomTrivia = new Map(); // rid -> {q, opts, a, endsAt, timer, by}
+const roomPolls = new Map(); // rid -> {q, opts, votes:Map name->idx, by, at}
+const roomScramble = new Map(); // rid -> {word, mixed, endsAt, timer, by}
+const roomXO = new Map(); // rid -> {x, o, board:[9], turn, timer}
+const reminders = new Map(); // id -> {to, room, text, at, timer}
+let remSeq = 1;
+const TRIVIA_BANK = [
+  { q: 'מהי בירת ישראל?', opts: ['תל אביב', 'ירושלים', 'חיפה', 'באר שבע'], a: 1 },
+  { q: 'כמה ימים יש בשבוע?', opts: ['5', '6', '7', '8'], a: 2 },
+  { q: 'מה הצבע של השמיים ביום בהיר?', opts: ['ירוק', 'אדום', 'כחול', 'צהוב'], a: 2 },
+  { q: 'כמה זה 7 כפול 8?', opts: ['54', '56', '63', '48'], a: 1 },
+  { q: 'איזה חג חוגגים עם סופגניות?', opts: ['פסח', 'סוכות', 'חנוכה', 'פורים'], a: 2 },
+];
+const HEB_LETTERS = ['א', 'ב', 'ג', 'ד'];
+function botSay(rid, text, media) {
+  rr2push(rid, { id: `m${++msgSeq}-${Date.now().toString(36)}`, from: BOT_NAME, text: String(text || '').slice(0, 2000), at: Date.now(), ...(media ? { media } : {}) });
+}
+function triviaText(t) {
+  return `🎯 *טריוויה!* (5 נקודות, 90 שניות)\n\n❓ ${t.q}\n\n` +
+    t.opts.map((o, i) => `${HEB_LETTERS[i]}. ${o}`).join('\n') +
+    `\n\nענו באות (א/ב/ג/ד) או מספר (1-4) — גם בלי !`;
+}
+async function cmdTrivia(rid, by) {
+  if (roomTrivia.has(rid)) { botSay(rid, '🎯 כבר רצה טריוויה — ענו עליה קודם!'); return; }
+  let t = null;
+  try {
+    const { text } = await Promise.race([
+      chatAI('כתוב שאלת טריוויה בעברית עם 4 אפשרויות. החזר JSON בלבד: {"q":"...","opts":["...","...","...","..."],"a":0}. המספר a הוא אינדקס התשובה הנכונה (0-3).', []),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 20000)),
+    ]);
+    const j = JSON.parse((String(text || '').match(/\{[\s\S]*\}/) || [])[0] || 'null');
+    if (j && j.q && Array.isArray(j.opts) && j.opts.length === 4 && j.a >= 0 && j.a <= 3) t = j;
+  } catch {}
+  if (!t) t = TRIVIA_BANK[Math.floor(Math.random() * TRIVIA_BANK.length)];
+  const rec = { ...t, endsAt: Date.now() + 90000, by, timer: null };
+  rec.timer = setTimeout(() => {
+    roomTrivia.delete(rid);
+    botSay(rid, `⏰ הזמן עבר! התשובה: *${HEB_LETTERS[t.a]}. ${t.opts[t.a]}*`);
+  }, 90000);
+  if (rec.timer.unref) rec.timer.unref();
+  roomTrivia.set(rid, rec);
+  botSay(rid, triviaText(t));
+}
+function cmdPollCreate(rid, by, q) {
+  const parts = String(q || '').split('|').map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 3) {
+    botSay(rid, '📊 שימוש: !סקר שאלה | אפשרות1 | אפשרות2 ...\nדוגמה: !סקר איפה נפגשים? | פארק | קניון | ים\n(מצביעים במספר האפשרות, בלי !)');
+    return;
+  }
+  const [qq, ...opts] = parts;
+  if (opts.length > 9) opts.length = 9;
+  roomPolls.set(rid, { q: qq.slice(0, 200), opts: opts.map((o) => o.slice(0, 60)), votes: new Map(), by, at: Date.now() });
+  botSay(rid, pollText(roomPolls.get(rid)));
+}
+function pollText(p) {
+  const counts = p.opts.map((_, i) => [...p.votes.values()].filter((v) => v === i).length);
+  const total = p.votes.size;
+  let out = `📊 *${p.q}*\n\n`;
+  p.opts.forEach((o, i) => {
+    const c = counts[i];
+    const pct = total ? Math.round((c / total) * 100) : 0;
+    out += `${i + 1}. ${o} — ${c} קולות (${pct}%)\n`;
+  });
+  out += `\n🗳️ ${total} מצביעים · הצבעה: שלחו את המספר (בלי !) · !סקר-תוצאות · !סקר-סגור`;
+  return out;
+}
+function cmdRemind(rid, by, q) {
+  const m = String(q || '').trim().match(/^(\d{1,4}|[0-2]?\d:[0-5]\d)\s+([\s\S]{2,200})$/);
+  if (!m) {
+    botSay(rid, '⏰ שימוש: !תזכורת דקות טקסט · !תזכורת 18:30 טקסט\nדוגמה: !תזכורת 30 להוציא עוף');
+    return;
+  }
+  let at = 0;
+  if (/^\d{1,4}$/.test(m[1])) {
+    const mins = Math.min(1440, Math.max(1, parseInt(m[1], 10)));
+    at = Date.now() + mins * 60000;
+  } else {
+    const [hh, mm] = m[1].split(':').map(Number);
+    const d = new Date();
+    d.setHours(hh, mm, 0, 0);
+    at = d.getTime() <= Date.now() ? d.getTime() + 86400000 : d.getTime();
+  }
+  const id = remSeq++;
+  const delay = Math.min(at - Date.now(), 2147483647);
+  const timer = setTimeout(() => {
+    reminders.delete(id);
+    botSay(rid, `⏰ *תזכורת ל${by}:* ${m[2]}`);
+  }, Math.max(1000, delay));
+  if (timer.unref) timer.unref();
+  reminders.set(id, { to: by, room: rid, text: m[2], at, timer });
+  botSay(rid, `⏰ נרשם! אזכיר לך "${m[2].slice(0, 80)}" ב־${new Date(at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+}
+function cmdRemList(rid, by) {
+  const mine = [...reminders.entries()].filter(([, r]) => r.room === rid && r.to === by);
+  if (!mine.length) { botSay(rid, '⏰ אין לך תזכורות פעילות בחדר הזה.'); return; }
+  botSay(rid, '⏰ *התזכורות שלך:*\n' + mine.map(([id, r]) =>
+    `• ${r.text.slice(0, 80)} — ${new Date(r.at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join('\n'));
+}
+const XO_WIN = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+function xoText(g) {
+  const c = g.board.map((v, i) => v || (i + 1));
+  return `🎮 *איקס-עיגול:* ❌ ${g.x} נגד ⭕ ${g.o || '...'} — תור: ${g.turn}\n\n` +
+    `${c[0]} | ${c[1]} | ${c[2]}\n${c[3]} | ${c[4]} | ${c[5]}\n${c[6]} | ${c[7]} | ${c[8]}\n\nמהלך: !xo מספר (1-9)`;
+}
+function xoWinner(b) {
+  for (const [a, c, d] of XO_WIN) if (b[a] && b[a] === b[c] && b[a] === b[d]) return b[a];
+  return b.every(Boolean) ? 'תיקו' : null;
+}
+function cmdXO(rid, by, q) {
+  const g = roomXO.get(rid);
+  if (/ביטול/.test(q)) {
+    if (g) { roomXO.delete(rid); botSay(rid, '🎮 המשחק בוטל.'); }
+    else botSay(rid, 'אין משחק פעיל.');
+    return;
+  }
+  if (!g) {
+    roomXO.set(rid, { x: by, o: null, board: Array(9).fill(''), turn: by });
+    botSay(rid, `🎮 ${by} פתח משחק! יריב כותב !איקס-עיגול להצטרפות (⭕).\n(ביטול: !איקס-עיגול ביטול)`);
+    return;
+  }
+  if (g.x !== by && !g.o) {
+    g.o = by;
+    botSay(rid, xoText(g));
+    return;
+  }
+  botSay(rid, '🎮 משחק ήδη רץ — מהלך עם !xo מספר.');
+}
+function cmdXOMove(rid, by, n) {
+  const g = roomXO.get(rid);
+  if (!g) { botSay(rid, 'אין משחק פעיל. פתח עם !איקס-עיגול'); return; }
+  if (!g.o) { botSay(rid, 'מחכים ליריב שיצטרף עם !איקס-עיגול'); return; }
+  if (by !== g.turn) { botSay(rid, `לא תורך! תור: ${g.turn}`); return; }
+  const i = n - 1;
+  if (!(i >= 0 && i < 9) || g.board[i]) { botSay(rid, 'תא תפוס או לא תקין — בחר 1-9 פנוי.'); return; }
+  g.board[i] = (by === g.x) ? 'X' : 'O';
+  const w = xoWinner(g.board);
+  if (w === 'תיקו') { roomXO.delete(rid); botSay(rid, xoText(g) + '\n\n🤝 תיקו!'); return; }
+  if (w) {
+    const winner = w === 'X' ? g.x : g.o;
+    roomXO.delete(rid);
+    addPoints(winner, 10);
+    botSay(rid, xoText(g) + `\n\n🏆 *${winner} ניצח/ה!* (+10 נקודות)`);
+    return;
+  }
+  g.turn = (by === g.x) ? g.o : g.x;
+  botSay(rid, xoText(g));
+}
+const TD_TRUTH = ['מה הסוד הכי מצחיק שלך?', 'מה המאכל שאתה הכי אוהב?', 'מה החלום הכי מוזר שהיה לך?', 'איזו מתנה הכי שימחה אותך?', 'מה אתה עושה כשמשעמם לך?', 'איזה שיר אתה שר במקלחת?', 'מה הפחד הכי טיפשי שלך?', 'ספר על חבר ילדות.'];
+const TD_DARE = ['שלח תמונה של הנוף מהחלון.', 'כתוב משפט עם 3 חרוזים.', 'ספר בדיחה עכשיו.', 'תאר את היום שלך באימוג׳ים בלבד.', 'כתוב מחמאה למישהו בחדר.', 'ספור עד 20 בקול רם.', 'צייר לב ושלח תמונה.', 'כתוב את שם החדר הפוך.'];
+const SCRAMBLE_WORDS = ['שלום', 'מחשב', 'טלפון', 'שמש', 'ירח', 'כדורגל', 'מוזיקה', 'ספר', 'חתול', 'כלב', 'פרח', 'עץ'];
+function scrambleW(w) {
+  const a = [...w];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; }
+  return a.join('');
+}
+function cmdScramble(rid, by) {
+  if (roomScramble.has(rid)) { botSay(rid, '🧩 כבר יש מילה פעילה — נחשו אותה!'); return; }
+  const word = SCRAMBLE_WORDS[Math.floor(Math.random() * SCRAMBLE_WORDS.length)];
+  let mixed = scrambleW(word);
+  if (mixed === word) mixed = scrambleW(word);
+  const rec = { word, endsAt: Date.now() + 300000, by, timer: null };
+  rec.timer = setTimeout(() => { roomScramble.delete(rid); botSay(rid, `⏰ הזמן עבר! המילה הייתה: *${word}*`); }, 300000);
+  if (rec.timer.unref) rec.timer.unref();
+  roomScramble.set(rid, rec);
+  botSay(rid, `🧩 *מילים מעורבבות!* (3 נקודות)\n\nפענחו: *${mixed}*\nענו בלי ! — הראשון/ה מנצח/ת (5 דקות)`);
+}
+// קלט חופשי במשחקים (אותיות טריוויה, הצבעות, ניחושים) — true = טופל, לא להעביר לבוט
+function roomGameInput(rid, name, txt) {
+  const t = String(txt || '').trim();
+  if (!t || name === BOT_NAME) return false;
+  const tr = roomTrivia.get(rid);
+  if (tr && Date.now() < tr.endsAt) {
+    let idx = -1;
+    const m1 = t.match(/^[א-ד]$/), m2 = t.match(/^[1-4]$/);
+    if (m1) idx = HEB_LETTERS.indexOf(m1[0]);
+    else if (m2) idx = parseInt(m2[0], 10) - 1;
+    if (idx >= 0) {
+      if (idx === tr.a) {
+        clearTimeout(tr.timer);
+        roomTrivia.delete(rid);
+        addPoints(name, 5);
+        botSay(rid, `🎉 *נכון, ${name}!* התשובה: ${HEB_LETTERS[tr.a]}. ${tr.opts[tr.a]} (+5 נקודות)`);
+      }
+      return true;
+    }
+  }
+  const p = roomPolls.get(rid);
+  if (p) {
+    const m = t.match(/^[1-9]$/);
+    if (m) {
+      const i = parseInt(m[0], 10) - 1;
+      if (i < p.opts.length) {
+        p.votes.set(name, i);
+        botSay(rid, pollText(p));
+      }
+      return true;
+    }
+  }
+  const sc = roomScramble.get(rid);
+  if (sc && Date.now() < sc.endsAt && t.length >= 2 && t.length <= 20 && !t.startsWith('!') && !t.includes(' ')) {
+    if (t === sc.word) {
+      clearTimeout(sc.timer);
+      roomScramble.delete(rid);
+      addPoints(name, 3);
+      botSay(rid, `🎉 *כל הכבוד ${name}!* פענחת: ${sc.word} (+3 נקודות)`);
+    }
+    return true;
+  }
+  return false;
+}
+
 function statusPub(x) {
   return { id: x.id, from: x.from, kind: x.kind, text: x.text, img: x.img, bg: x.bg, at: x.at, views: (x.views || []).length };
 }
@@ -666,14 +1003,39 @@ function handleFrame(ws, state, text) {
     if (st) return;
     const name = cleanName(m.name);
     if (!validName(name)) { wsSend(ws, { t: 'err', msg: 'שם לא תקין (2-20 תווים: עברית/אנגלית/ספרות)' }); return; }
-    for (const [w, c] of clients) {
-      if (c.name === name) {
-        // רענון דף: החיבור הישן מת או מאותו IP — מחליפים אוטומטית
-        if (w.destroyed || c.ip === state.ip) { try { w.destroy(); } catch {} clients.delete(w); break; }
-        wsSend(ws, { t: 'err', msg: 'השם תפוס, בחר שם אחר' }); return;
-      }
-    }
     if (name.includes('מולטי בוט')) { wsSend(ws, { t: 'err', msg: 'השם הזה שמור לבוט 🤖' }); return; }
+    const mode = m.mode === 'register' ? 'register' : 'login';
+    const pass = String(m.pass || '');
+    const token = String(m.token || '');
+    const acc = accounts.users[name];
+    if (token) {
+      // התחברות אוטומטית עם טוקן שמור
+      const rec = accounts.tokens[token];
+      if (!rec || rec.name !== name) { wsSend(ws, { t: 'err', msg: 'ההתחברות פגה — התחבר שוב עם סיסמה' }); return; }
+      rec.at = Date.now();
+    } else if (mode === 'register') {
+      if (acc) { wsSend(ws, { t: 'err', msg: 'השם תפוס — בחר שם אחר או התחבר לחשבון' }); return; }
+      if (!validPass(pass)) { wsSend(ws, { t: 'err', msg: 'סיסמה חייבת 4 תווים לפחות' }); return; }
+      accounts.users[name] = { pass: hashPass(pass, crypto.randomBytes(16).toString('hex')), createdAt: Date.now() };
+    } else {
+      if (!acc) { wsSend(ws, { t: 'err', msg: 'אין חשבון כזה — צור חשבון חדש' }); return; }
+      if (loginBlocked(state.ip)) { wsSend(ws, { t: 'err', msg: 'יותר מדי ניסיונות — נסה בעוד כמה דקות' }); return; }
+      if (!checkPass(pass, acc.pass)) { loginFail(state.ip); wsSend(ws, { t: 'err', msg: 'סיסמה שגויה' }); return; }
+    }
+    // טוקן חדש להתחברות אוטומטית הבאה + ניקוי ישנים
+    const myToken = newToken();
+    accounts.tokens[myToken] = { name, at: Date.now() };
+    try {
+      const mine = Object.entries(accounts.tokens).filter(([, r]) => r && r.name === name).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+      for (const [tk] of mine.slice(5)) delete accounts.tokens[tk];
+      const cut = Date.now() - 90 * 24 * 3600 * 1000;
+      for (const [tk, r] of Object.entries(accounts.tokens)) if (!r || (r.at || 0) < cut) delete accounts.tokens[tk];
+    } catch {}
+    saveAccounts();
+    // אותו חשבון מחיבור אחר — החדש מחליף את הישן
+    for (const [w, c] of clients) {
+      if (c.name === name) { try { w.destroy(); } catch {} clients.delete(w); break; }
+    }
     const rid = (m.room && rooms.has(m.room)) ? m.room : 'general';
     const avRaw = String(m.avatar || 'photo');
     const avatar = (['photo', 'init', 'none'].includes(avRaw) || (avRaw.startsWith('/media/') && avRaw.length < 140)) ? avRaw : 'photo';
@@ -683,7 +1045,7 @@ function handleFrame(ws, state, text) {
       avatar, about, presence: 'all', room: rid,
       ip: state.ip, lastMsg: 0, joinedAt: Date.now(),
     });
-    wsSend(ws, { t: 'ok', you: name, users: usersList(ws), room: rid, rooms: roomsList(), all: allUsers() });
+    wsSend(ws, { t: 'ok', you: name, token: myToken, users: usersList(ws), room: rid, rooms: roomsList(), all: allUsers() });
     wsSend(ws, { t: 'hist', items: getRoom(rid).hist.slice(-50) });
     if (meta.pins[rid]) wsSend(ws, { t: 'pin', ...meta.pins[rid] });
     broadcastUsers();
@@ -769,6 +1131,8 @@ function handleFrame(ws, state, text) {
       botVoice(st.room, media.url, st.name).catch(() => {});
       return;
     }
+    addPoint(st.name);
+    if (txt && roomGameInput(st.room, st.name, txt)) return;
     if (txt.includes('מולטי בוט') || txt.startsWith('!')) {
       botAsk(st.room, txt.replace(/^!/, '').trim() || txt, st.name).catch(() => {});
     }
