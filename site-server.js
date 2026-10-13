@@ -41,7 +41,7 @@ import {
 } from './more.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || process.env.SITE_PORT || 3002);
+const PORT = Number(process.env.SITE_PORT || process.env.PORT || 3002);
 const ADMIN_KEY = process.env.SITE_ADMIN || 'multi-admin-1';
 const CHAT_FILE = new URL('./site-chat.json', import.meta.url);
 const MAX_HIST = 200;
@@ -1277,7 +1277,7 @@ function handleFrame(ws, state, text) {
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.json': 'application/json' };
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url || '/', 'http://x');
     if (u.pathname === '/api/export') {
