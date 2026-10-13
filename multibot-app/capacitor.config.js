@@ -4,8 +4,8 @@ const config = {
   appName: 'מולטי בוט',
   webDir: 'www',
   server: {
-    // שרת הצ'אט ברשת הביתית — הטלפון חייב להיות על אותו WiFi
-    url: 'http://10.84.231.34:3002',
+    // שרת ציבורי קבוע — עובד מכל מקום
+    url: 'https://multibot-zuk0.onrender.com',
     cleartext: true,
   },
   android: {
