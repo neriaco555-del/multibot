@@ -438,6 +438,12 @@ body.light .tile .inf small{ color:#667781; }
 body.light .tile .inf time{ color:#667781; }
 /* כפתור פלוס */
 #fab{ width:58px; height:58px; font-size:30px; font-weight:300; line-height:1; box-shadow:0 4px 12px rgba(0,0,0,.4); bottom:24px; left:20px; }
+/* באנר הורדת אפליקציה */
+#dlbanner{ margin:2px 14px 8px; }
+#dlbanner a{ display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(0,168,132,.12); color:#00a884; border:1px solid rgba(0,168,132,.35); border-radius:24px; padding:9px 12px; font-size:14px; font-weight:700; text-decoration:none; }
+#dlbanner a:active{ transform:scale(.98); }
+body.light #dlbanner a{ background:#e7f8f2; }
+#join .dl{ display:block; margin-top:12px; font-size:13.5px; font-weight:600; color:#00a884; text-decoration:none; }
 </style>
 <style id="wa-icons">
 /* ===== אייקוני וואטסאפ (SVG) — גדלים וצבעים ===== */
@@ -513,6 +519,7 @@ header .hic .ic{ width:23px; height:23px; }
   <button data-tab="contacts">אנשי קשר</button>
   <button data-tab="updates">עדכונים</button>
 </div>
+<div id="dlbanner"><a href="https://github.com/neriaco555-del/multibot/releases/download/v1.0/multibot.apk">📲 הורד את אפליקציית מולטי בוט</a></div>
 <div id="homelist"></div>
 <button id="fab" title="חדש"><svg class="ic"><use href="#i-chatplus"/></svg></button>
 </div>
@@ -635,6 +642,7 @@ header .hic .ic{ width:23px; height:23px; }
     <input id="jemail" placeholder="מייל (לא חובה)" maxlength="60" inputmode="email">
     <button class="go" id="jgo">הצטרפות לצ'אט</button>
     <div class="hint">בלי סיסמה ובלי הרשמה מסובכת — רק שם.</div>
+    <a class="dl" href="https://github.com/neriaco555-del/multibot/releases/download/v1.0/multibot.apk">📲 להורדת האפליקציה לטלפון</a>
   </div>
 </div>
 <script>
