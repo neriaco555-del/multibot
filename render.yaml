@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: multibot-chat
+    runtime: node
+    repo: https://github.com/neriaco555-del/multibot.git
+    branch: main
+    buildCommand: npm ci
+    startCommand: node site-server.js
+    plan: free
+    healthCheckPath: /api/stats
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SITE_ADMIN
+        generateValue: true
+      # מפתחות AI — מוגדרים בדשבורד אחרי הדיפלוי (או דרך ה-API)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false

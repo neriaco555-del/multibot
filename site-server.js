@@ -30,7 +30,7 @@ import { searchWeb } from './web-search.js';
 import { generateImage } from './ai-image.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.SITE_PORT || 3002);
+const PORT = Number(process.env.PORT || process.env.SITE_PORT || 3002);
 const ADMIN_KEY = process.env.SITE_ADMIN || 'multi-admin-1';
 const CHAT_FILE = new URL('./site-chat.json', import.meta.url);
 const MAX_HIST = 200;
