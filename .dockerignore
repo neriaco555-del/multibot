@@ -1,0 +1,7 @@
+node_modules/
+auth_info/
+auth_info.bak/
+.env
+qr.png
+*.log
+.git/

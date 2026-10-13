@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">מולטי בוט</string>
+    <string name="title_activity_main">מולטי בוט</string>
+    <string name="package_name">com.multibot.chat</string>
+    <string name="custom_url_scheme">com.multibot.chat</string>
+</resources>

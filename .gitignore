@@ -1,0 +1,33 @@
+node_modules/
+auth_info/
+auth_info*/
+.env
+gsheets-key.json
+# לוגים וסשנים מתים
+*.log
+qr.png
+lid-map.json
+status-views.json
+my-contacts.json
+tc-session.json
+bot-store.json
+site-chat.json
+site-status.json
+site-reports.json
+site-meta.json
+# מדיה כבדה לא מקושרת + העלאות משתמשים
+*.mp4
+wh-s*.jpg
+site/media/*
+.freebuff/
+Chat-Messaging-App-Light-and-Dark-Theme-master/
+# בילדים של האפליקציה (ה-APK עולה ל-Release)
+multibot-app/android/build/
+multibot-app/android/.gradle/
+multibot-app/android/local.properties
+multibot-app/android/app/build/
+multibot-app/*.apk
+bot-admin-app/.gradle/
+bot-admin-app/build/
+bot-admin-app/app/build/
+bot-admin-app/local.properties
