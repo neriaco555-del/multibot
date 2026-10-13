@@ -399,7 +399,7 @@ function splitTts(text, max = 180) {
   return parts.filter(Boolean).slice(0, 5);
 }
 // 🔊 דיבור לעברית (mp3 לדפדפן — בלי צורך ב-ffmpeg)
-async function ttsMp3Url(text) {
+async function ttsMp3Buffer(text) {
   const clean = String(text || '').trim().slice(0, 900);
   if (clean.length < 2) throw new Error('טקסט קצר מדי');
   const bufs = [];
@@ -412,7 +412,10 @@ async function ttsMp3Url(text) {
     bufs.push(b);
   }
   if (!bufs.length) throw new Error('TTS נכשל');
-  return saveSiteMedia(Buffer.concat(bufs), 'mp3');
+  return Buffer.concat(bufs);
+}
+async function ttsMp3Url(text) {
+  return saveSiteMedia(await ttsMp3Buffer(text), 'mp3');
 }
 const SITE_HELP = `🤖 *מולטי בוט — כל הפקודות (כמו בקבוצת וואטסאפ!)*
 
@@ -1335,12 +1338,11 @@ const server = http.createServer(async (req, res) => {
       try {
         const text = (u.searchParams.get('text') || '').slice(0, 300);
         if (text.trim().length < 2) throw new Error('empty');
-        const url = await ttsMp3Url(text);
-        const fp = path.join(DIR, 'site', url.replace(/^\/media\//, ''));
-        const data = await fs.promises.readFile(fp);
+        const data = await ttsMp3Buffer(text);
         res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=3600' });
         res.end(data);
-      } catch {
+      } catch (e) {
+        console.warn('TTS-ERR:', (e && e.message || e || '').toString().slice(0, 200));
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
       }
