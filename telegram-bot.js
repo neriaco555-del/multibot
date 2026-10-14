@@ -113,10 +113,31 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   const needQ = (usage) => say(usage || '❓ חסר טקסט. כתוב /עזרה.');
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
 
-  // 🎨 תמונה
+  // 🎨 תמונה — קודם דרך בוט הוואטסאפ (0503651436) → +16508702892, נפילה לישיר
   if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
     if (q.length < 2) return needQ('🎨 תאר מה ליצור. דוגמה: /תמונה חתול אסטרונאוט');
     await act('upload_photo');
+    await sendSafe(chatId, `🎨 שולח לבוט הוואטסאפ... ⏳`).catch(() => {});
+    const rsec = (process.env.RELAY_SECRET || '').trim();
+    const rport = Number(process.env.RELAY_PORT || 3888);
+    if (rsec) {
+      try {
+        const ctrl = new AbortController();
+        const tt = setTimeout(() => ctrl.abort(), 250000);
+        const r = await fetch(`http://127.0.0.1:${rport}/api/relay-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-relay-secret': rsec },
+          body: JSON.stringify({ prompt: q.slice(0, 300) }),
+          signal: ctrl.signal,
+        }).catch(() => null);
+        clearTimeout(tt);
+        const j = r ? await r.json().catch(() => null) : null;
+        if (j && j.ok && j.image) {
+          const buf = Buffer.from(j.image, 'base64');
+          if (buf.length > 5000) return api.sendPhoto({ chat_id: chatId, photo: up(buf, 'img.jpg'), caption: q.slice(0, 200) });
+        }
+      } catch {}
+    }
     try {
       const { buffer } = await Promise.race([
         generateImage(q.slice(0, 300)),

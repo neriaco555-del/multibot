@@ -11,6 +11,7 @@
  */
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
+import http from 'node:http';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import makeWASocket, {
   useMultiFileAuthState,
@@ -6419,3 +6420,52 @@ const DOWNLOAD_DISABLED =
 }
 
 start();
+
+/* ---------- 🌉 ממסר מקומי: טלגרם/שרת → בוט וואטסאפ (0503651436) → Instinct וחזרה ----------
+   איך זה עובד בוואטסאפ: requestInstinct שולח את הפרומפט ל-+16508702892 דרך תור FIFO,
+   ומחכה שהתמונה תחזור בהודעה — אותו מסלול בדיוק משמש כאן, רק המבקש הוא HTTP מקומי.
+   מאזין על 127.0.0.1 בלבד + סוד (x-relay-secret). */
+{
+  const SECRET = (process.env.RELAY_SECRET || '').trim();
+  const PORT = Number(process.env.RELAY_PORT || 3888);
+  if (SECRET) {
+    const srv = http.createServer((req, res) => {
+      if (req.headers['x-relay-secret'] !== SECRET) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end('{"ok":false}');
+        return;
+      }
+      const u = new URL(req.url || '/', 'http://x');
+      if (u.pathname === '/api/relay-health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, connected: !!activeSock }));
+        return;
+      }
+      if (u.pathname === '/api/relay-image' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => { body += c; if (body.length > 5000) req.destroy(); });
+        req.on('end', async () => {
+          try {
+            const { prompt } = JSON.parse(body || '{}');
+            if (!prompt || String(prompt).trim().length < 2) throw new Error('empty');
+            if (!activeSock) throw new Error('offline');
+            const buf = await Promise.race([
+              requestInstinct(activeSock, String(prompt).slice(0, 1000), 'tg-relay'),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 240000)),
+            ]);
+            if (!buf || buf.length < 5000) throw new Error('empty');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, image: buf.toString('base64') }));
+          } catch (e) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String((e && e.message) || '').slice(0, 100) }));
+          }
+        });
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end('{"ok":false}');
+    });
+    srv.listen(PORT, '127.0.0.1', () => console.log(`🌉 ממסר מקומי: http://127.0.0.1:${PORT}`));
+  }
+}
