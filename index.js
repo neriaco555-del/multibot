@@ -599,6 +599,7 @@ function instinctBumpFail() {
   if (instinctFails === 2) instinctColdAt = Date.now();
 }
 let instinctSendJid = '23949492670633@lid'; // ה-JID שכן עובד לשליחה (LID בזמן אמת)
+let instinctQTimer = null; // טיימאאוט לשאלת הבהרה — לא מחכים לנצח לתשובה אנושית
 function isInstinctJid(jid) {
   try {
     const b = instBare(jid);
@@ -616,7 +617,12 @@ async function resolveInstinct(sock) {
 }
 function requestInstinct(sock, prompt, chatJid, mediaBuf = null) {
   return new Promise((resolve, reject) => {
+    const pos = instinctQueue.length + (instinctRunning ? 1 : 0);
     instinctQueue.push({ prompt: String(prompt || '').slice(0, 1000), chatJid, mediaBuf, resolve, reject, at: Date.now() });
+    // חיווי תור: אם יש בקשה פעילה/ממתינה לפנייך — אומרים, שלא ייראה תקוע
+    if (pos > 0 && /@g\.us$|@s\.whatsapp\.net$|@lid$/.test(String(chatJid || ''))) {
+      sock.sendMessage(chatJid, { text: `🎨 בתור ליצירה (מקום ${pos + 1}) — אשלח כשמוכן, סבלנות 🙏` }).catch(() => {});
+    }
     pumpInstinct(sock).catch(() => {});
   });
 }
@@ -644,8 +650,8 @@ async function pumpInstinct(sock) {
       }, config.INSTINCT_TIMEOUT_MS);
       instinctPending = {
         id, timer, chatJid: job.chatJid,
-        resolve: (buf) => { clearTimeout(timer); resolve(buf); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
+        resolve: (buf) => { clearTimeout(timer); try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {} resolve(buf); },
+        reject: (e) => { clearTimeout(timer); try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {} reject(e); },
       };
       const sendPayload = job.mediaBuf
         ? { image: job.mediaBuf, caption: job.prompt }
@@ -1884,8 +1890,23 @@ async function handleChatMessage(sock, botJid, msg) {
                 console.log(`🤖 instinct asks: ${qtext.slice(0, 80)}`);
                 if (activeJob) activeJob.waitingHuman = true;
                 try {
-                  await sock.sendMessage(p.chatJid, { text: `🤖 *Instinct שואל:*\n${qtext}\n\n_ענו כאן והתשובה תועבר אליו (תוך דקה-שתיים)_` });
+                  await sock.sendMessage(p.chatJid, { text: `🤖 *Instinct שואל:*\n${qtext}\n\n_ענו כאן והתשובה תועבר אליו (3 דקות, אחרת אמשיך אוטומטית)_` });
                 } catch {}
+                // ⏱️ לא מחכים לנצח: בלי תשובה אנושית תוך 3 דקות — נופלים ליצירה ישירה
+                try { clearTimeout(instinctQTimer); } catch {}
+                instinctQTimer = setTimeout(() => {
+                  try {
+                    instinctQTimer = null;
+                    if (instinctPending && instinctPending.id === p.id) {
+                      const pend = instinctPending;
+                      instinctPending = null;
+                      if (activeJob) activeJob.waitingHuman = false;
+                      sock.sendMessage(pend.chatJid, { text: `🤖 לא עניתם — ממשיך אוטומטית בדרך אחרת... ⏳` }).catch(() => {});
+                      pend.reject(new Error('NO_HUMAN_ANSWER'));
+                    }
+                  } catch {}
+                }, 180000);
+                if (instinctQTimer.unref) instinctQTimer.unref();
               }
             }
           } else if ((msg.message?.imageMessage || msg.message?.stickerMessage) && instinctLate && Date.now() - instinctLate.at < 15 * 60 * 1000) {
@@ -2226,6 +2247,7 @@ async function handleChatMessage(sock, botJid, msg) {
             !msg.key.fromMe && !usedPrefix && !mentioned && text && text.length < 500 &&
             !hasImage && !hasAudio) {
           activeJob.waitingHuman = false;
+          try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {}
           try {
             await sock.sendMessage(instinctSendJid || config.INSTINCT_JID, { text: text.slice(0, 500) });
             await sock.sendMessage(remoteJid, { text: `🤖 הועבר ל-Instinct, מחכה לתוצאה... ⏳` });
@@ -2278,6 +2300,20 @@ async function handleChatMessage(sock, botJid, msg) {
               await sock.sendMessage(remoteJid, { text: learned });
               return;
             }
+          }
+        }
+
+        // --- 🖼️ שאלה על תמונה בלי תמונה מצורפת — לא מנחשים! מבקשים את התמונה ---
+        {
+          const fw0q = (text.split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
+          const hasQuotedImg = !!(quoted && quoted.imageMessage);
+          const asksAboutImage = /מה (יש|רואים|זה|זאת|מופיע) בתמונה|תאר(י|ו)?( לי)?( את)? ?התמונה|מה אתה רואה|איזו תמונה|what('| i)s in (the|this) (image|picture|photo)|describe (the|this) (image|picture|photo)/i.test(text);
+          if (asksAboutImage && !hasImage && !hasQuotedImg && !KNOWN_FIRST.has(fw0q)) {
+            pushHistory(remoteJid, 'user', text);
+            const reply = '📷 כדי שאראה את התמונה — שלח/י אותה עם השאלה בכיתוב, או הגב (Reply) עליה עם השאלה 🙂';
+            pushHistory(remoteJid, 'assistant', reply);
+            await sock.sendMessage(remoteJid, { text: reply });
+            return;
           }
         }
 

@@ -211,113 +211,121 @@ async function sendWaba(to, body, recipientType = 'individual') {
 // 📋 תפריט לחצנים "בחר אפשרות" — עובד בצ'אט פרטי, בקבוצה נופל לטקסט
 async function sendInteractiveMenu(to, recipientType = 'individual') {
   if (recipientType !== 'individual') {
-    return sendWaba(to, textMenu(), recipientType);
+    return sendWaba(to, mbTextMenu(), recipientType);
   }
   try {
     const ok = await sendWabaPayload(to, {
       type: 'interactive',
       interactive: {
         type: 'list',
-        header: { type: 'text', text: '🤖 תפריט ראשי' },
-        body: { text: 'בחר מה לעשות — הכל בחינם 👇' },
+        header: { type: 'text', text: '🤖 מולטי בוט' },
+        body: { text: 'בחר מה לעשות 👇' },
         footer: { text: 'בחר אפשרות' },
         action: {
           button: 'בחר אפשרות',
-          sections: [{
-            title: 'הגרלה ושיתופים',
-            rows: [
-              { id: 'mylink', title: '🔗 הלינק שלי לשיתוף', description: 'קבל לינק אישי וצבור כרטיסים' },
-              { id: 'myinvites', title: '👥 מי הגיע דרכי?', description: 'רשימת המצטרפים דרך הלינק שלך' },
-              { id: 'mytickets', title: '🎟️ כמה כרטיסים יש לי?', description: 'כרטיס על כל צירוף' },
-              { id: 'draw_time', title: '⏰ מתי ההגרלה?', description: 'מועד ההגרלה הקרובה' },
-              { id: 'leaders', title: '👥 המובילים בהגרלה', description: '10 המובילים בשיתופים' },
-              { id: 'info', title: '💬 ייעוץ ושיווק', description: 'פרטים על השירות' },
-            ],
-          }],
+          sections: [
+            {
+              title: 'AI ומדיה',
+              rows: [
+                { id: 'mb_chat', title: '💬 לשאול את ה-AI', description: 'שאלות, הסברים, רעיונות' },
+                { id: 'mb_image', title: '🎨 ליצור תמונה', description: 'תמונת AI מתיאור שלך' },
+                { id: 'mb_song', title: '🎵 לחפש שיר', description: 'קישורים מיוטיוב' },
+                { id: 'mb_video', title: '🎬 לחפש סרטון', description: 'סרטונים מיוטיוב' },
+                { id: 'mb_tts', title: '🔊 להקריא בקול', description: 'הודעה קולית בעברית' },
+              ],
+            },
+            {
+              title: 'מידע',
+              rows: [
+                { id: 'mb_weather', title: '🌤️ מזג אוויר', description: 'תחזית לפי עיר' },
+                { id: 'mb_news', title: '📰 חדשות', description: 'הכותרות החמות' },
+                { id: 'mb_rates', title: '💵 מטבע וקריפטו', description: 'שערים עדכניים' },
+                { id: 'mb_help', title: '❓ עזרה', description: 'כל הפקודות' },
+              ],
+            },
+          ],
         },
       },
     }, recipientType);
     if (!ok) {
-      // אם הרשמי דחה (למשל גרסת API) — נופלים לטקסט
-      return sendWaba(to, textMenu(), recipientType);
+      // אם הרשמי דחה — נופלים לטקסט
+      return sendWaba(to, mbTextMenu(), recipientType);
     }
     return true;
   } catch (e) {
     console.error('interactive fail, fallback לטקסט:', e.message);
-    return sendWaba(to, textMenu(), recipientType);
+    return sendWaba(to, mbTextMenu(), recipientType);
   }
 }
 
-// 🎯 טיפול בבחירה מהתפריט, מחזיר true אם טופל
+// 🎯 לחיצה בתפריט מולטי בוט — פעולות מיידיות או בקשת קלט
 async function handleMenuChoice(to, id, recipientType, userJid = to) {
-  const db = loadRefs();
   const myD = digitsOf(userJid);
-  const me = ensureUser(db, myD, '');
-  saveRefs(db);
-  switch (id) {
-    case 'mylink': {
-      await sendWaba(to, `🔗 *הלינק הייחודי שלך לשיתוף:*\n${inviteLink(db, myD)}\n\nכל מי שנכנס דרכו — אתה מקבל 🎟️ כרטיס להגרלה!`, recipientType);
-      return true;
-    }
-    case 'myinvites': {
-      const list = (me?.invited || []);
-      if (!list.length) {
-        await sendWaba(to, `🧑‍🤝‍🧑 *מי הגיע דרכך?*\n\nעוד אף אחד לא נכנס דרך הלינק שלך.\nשתף: ${inviteLink(db, myD)}`, recipientType);
-      } else {
-        await sendWaba(to, `🧑‍🤝‍🧑 *הגיעו דרכך (${list.length}):*\n` + list.slice(0, 20).map((d) => `• ${prettyNum(d)}`).join('\n'), recipientType);
-      }
-      return true;
-    }
-    case 'mytickets': {
-      await sendWaba(to, `🎟️ *יש לך ${me?.invited.length || 0} כרטיסים!*\n\nכרטיס על כל חבר שנכנס דרך הלינק שלך.`, recipientType);
-      return true;
-    }
-    case 'draw_time': {
-      await sendWaba(to, `⏰ *מתי ההגרלה תתקיים?*\n${RAFFLE_DATE}\n${RAFFLE_INFO}`, recipientType);
-      return true;
-    }
-    case 'leaders': {
-      await sendWaba(to, leaderboardText(db), recipientType);
-      return true;
-    }
-    case 'info': {
-      await sendWaba(to, `💬 *ייעוץ ושיווק*\nכתוב לנו מה אתה צריך ונחזור אליך בהקדם.`, recipientType);
-      return true;
-    }
+  if (id === 'mb_news' || id === 'mb_rates' || id === 'mb_help') {
+    return runMbFeature(to, id, '', recipientType, String(userJid));
+  }
+  if (MB_PROMPTS[id]) {
+    pendingMb.set(myD, { action: id, at: Date.now() });
+    await sendWaba(to, MB_PROMPTS[id], recipientType);
+    return true;
   }
   return false;
 }
 
-// ⌨️ פקודות טקסט של התפריט (גם לקבוצה), מחזיר true אם טופל
-async function handleMenuText(to, cleanText, recipientType, userJid = to) {
+// ⌨️ פקודות טקסט של מולטי בוט (גם לקבוצה), מחזיר true אם טופל
+async function handleMenuText(to, cleanText, recipientType, userJid = to, histKey = String(userJid)) {
   const t = String(cleanText || '').trim();
-  const db = loadRefs();
   const myD = digitsOf(userJid);
-  const me = ensureUser(db, myD, '');
   const low = t.toLowerCase();
-  const isMenu = /^(תפריט|!תפריט|menu|התחל|start|שלום|היי|הי|הי!)$/i.test(t) || low === 'בחר אפשרות';
-  if (isMenu) {
-    saveRefs(db);
+  // פתיחת תפריט
+  if (/^(תפריט|!תפריט|menu|התחל|start)$/i.test(t) || low === 'בחר אפשרות') {
+    pendingMb.delete(myD);
     await sendInteractiveMenu(to, recipientType);
     return true;
   }
   const cmd = t.replace(/^!/, '');
-  if (/^(הלינק שלי|הלינק|לינק)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'mylink', recipientType, userJid); }
-  if (/^(מי-הגיע|מי הגיע|מי הגיע דרכי)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'myinvites', recipientType, userJid); }
-  if (/^(כרטיסים|כמה כרטיסים|כרטיס)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'mytickets', recipientType, userJid); }
-  if (/^(מתי-הגרלה|מתי ההגרלה|הגרלה)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'draw_time', recipientType, userJid); }
-  if (/^(מובילים|המובילים|טופ)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'leaders', recipientType, userJid); }
-  if (/^(ייעוץ|שיווק|מידע|מידע כללי)$/i.test(cmd)) { saveRefs(db); return handleMenuChoice(to, 'info', recipientType, userJid); }
-  // 🔗 קליטת קוד הפניה: "הצטרפתי עם קוד XXXX" או "!הצטרף XXXX"
-  const m = t.match(/(?:הצטרפתי|הצטרף|הצטרפות|קוד)[^\dA-Za-z]{0,10}([A-Za-z0-9]{4,6})/);
-  if (m) {
-    const inviter = findByCode(db, m[1]);
-    if (inviter && inviter !== myD && !db.users[inviter].invited.includes(myD)) {
-      db.users[inviter].invited.push(myD);
-      saveRefs(db);
-      await sendWaba(to, `✅ נרשמת דרך ${prettyNum(inviter)}! בהצלחה בהגרלה 🍀\n\nכתוב !תפריט לקבלת הלינק האישי שלך.`, recipientType);
+  // פקודות ישירות עם תוכן: !שאל מה זה... / !תמונה חתול ...
+  const direct = [
+    [/^(שאל|שאלה)\s+([\s\S]+)/i, 'mb_chat', 2],
+    [/^(תמונה|צייר|ציור)\s+([\s\S]+)/i, 'mb_image', 2],
+    [/^(שיר|מוזיקה|נגן)\s+([\s\S]+)/i, 'mb_song', 2],
+    [/^(וידאו|סרטון|סרטונים|יוטיוב)\s+([\s\S]+)/i, 'mb_video', 2],
+    [/^(דבר|הקרא|קריין)\s+([\s\S]+)/i, 'mb_tts', 2],
+    [/^(מזג|מזג-אוויר)\s+([\s\S]+)/i, 'mb_weather', 2],
+  ];
+  for (const [re, action, gi] of direct) {
+    const m = t.match(re);
+    if (m) {
+      pendingMb.delete(myD);
+      await runMbFeature(to, action, m[gi], recipientType, histKey);
       return true;
     }
+  }
+  // פקודות בלי תוכן — שואלות קלט (בקבוצה: הסבר קצר במקום)
+  const needInput = [
+    [/^(שאל|שאלה)$/i, 'mb_chat'],
+    [/^(תמונה|צייר|ציור)$/i, 'mb_image'],
+    [/^(שיר|מוזיקה|נגן)$/i, 'mb_song'],
+    [/^(וידאו|סרטון|סרטונים|יוטיוב)$/i, 'mb_video'],
+    [/^(דבר|הקרא|קריין)$/i, 'mb_tts'],
+    [/^(מזג|מזג-אוויר)$/i, 'mb_weather'],
+  ];
+  for (const [re, action] of needInput) {
+    if (re.test(cmd)) {
+      pendingMb.set(myD, { action, at: Date.now() });
+      await sendWaba(to, MB_PROMPTS[action], recipientType);
+      return true;
+    }
+  }
+  if (/^(חדשות)$/i.test(cmd)) { pendingMb.delete(myD); await runMbFeature(to, 'mb_news', '', recipientType, histKey); return true; }
+  if (/^(מטבע|דולר|שערים|ביטקוין|קריפטו)$/i.test(cmd)) { pendingMb.delete(myD); await runMbFeature(to, 'mb_rates', '', recipientType, histKey); return true; }
+  if (/^(עזרה|עזרה-פקודות|help)$/i.test(cmd)) { pendingMb.delete(myD); await runMbFeature(to, 'mb_help', '', recipientType, histKey); return true; }
+  // ⏳ קלט ממתין אחרי בחירה בתפריט (5 דקות, לא פקודה אחרת)
+  const pend = pendingMb.get(myD);
+  if (pend && Date.now() - pend.at < 5 * 60 * 1000 && !t.startsWith(BOT_PREFIX)) {
+    pendingMb.delete(myD);
+    await runMbFeature(to, pend.action, t, recipientType, histKey);
+    return true;
   }
   return false;
 }
@@ -373,16 +381,6 @@ const server = http.createServer(async (req, res) => {
         for (const entry of payload.entry || []) {
           for (const change of entry.changes || []) {
             const value = change.value || {};
-            // שומרים מספר תצוגה ושמות פרופיל לטבלת המובילים
-            try {
-              const db0 = loadRefs();
-              const disp = value.metadata?.display_phone_number || '';
-              if (disp) db0.meta.displayNumber = String(disp).replace(/\D/g, '');
-              for (const c of value.contacts || []) {
-                if (c.wa_id && c.profile?.name) ensureUser(db0, digitsOf(c.wa_id), c.profile.name);
-              }
-              saveRefs(db0);
-            } catch {}
             for (const msg of value.messages || []) {
               const from = msg.from;
               if (!from) continue;
@@ -409,9 +407,9 @@ const server = http.createServer(async (req, res) => {
               const histKey = isGroup ? `${replyTo}:${from}` : from;
               console.log(`📩 מ-${from}${isGroup ? ` בקבוצה ${replyTo}` : ''}: ${cleanText.slice(0, 80)}`);
 
-              // 0. 📋 תפריט הגרלה/הפניות — תמיד זמין (לפני AI כדי לחסוך)
+              // 0. 📋 תפריט מולטי בוט — תמיד זמין (לפני AI כדי לחסוך)
               try {
-                if (await handleMenuText(replyTo, cleanText, replyType, from)) continue;
+                if (await handleMenuText(replyTo, cleanText, replyType, from, histKey)) continue;
               } catch (e) { console.error('menu fail:', e.message); }
 
               // 1. תשובה מיידית לשאלות מרפאה נפוצות

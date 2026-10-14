@@ -36,7 +36,7 @@ export const config = {
 
   // --- Instinct (בוט תמונות חיצוני — ממסרים אליו בקשות) ---
   INSTINCT_JID: process.env.INSTINCT_JID || '16508702892@s.whatsapp.net',
-  INSTINCT_TIMEOUT_MS: parseInt(process.env.INSTINCT_TIMEOUT_MS || '600000', 10) || 600000,
+  INSTINCT_TIMEOUT_MS: parseInt(process.env.INSTINCT_TIMEOUT_MS || '180000', 10) || 180000,
   // --- JSON2Video (יצירת סרטוני AI, ~1 קרדיט/שנייה) ---
   JSON2VIDEO_API_KEY: process.env.JSON2VIDEO_API_KEY || '',
   // --- AliExpress (מזהה שותפים לעיטוף קישורים — אופציונלי) ---
