@@ -375,6 +375,51 @@ ${String(s2).trim().slice(0, 1500)}
   }
 }
 
+/* ---------- 🌉 ממסר תמונות: עבודות לבוט הוואטסאפ (Instinct) וחזרה ---------- */
+const RELAY_SECRET = process.env.RELAY_SECRET || '';
+const relayJobs = new Map(); // id -> {prompt, room, status:'wait'|'done'|'fail', imageUrl, at}
+let relaySeq = 1;
+function relayAuth(req) {
+  return !!(RELAY_SECRET && String(req.headers['x-relay-secret'] || '') === RELAY_SECRET);
+}
+setInterval(() => {
+  try {
+    const cut = Date.now() - 20 * 60 * 1000;
+    for (const [id, j] of relayJobs) if (!j || j.at < cut) relayJobs.delete(id);
+  } catch {}
+}, 60000).unref?.();
+async function directImage(prompt) {
+  const { buffer } = await Promise.race([
+    generateImage(String(prompt || '').slice(0, 300)),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('img-timeout')), 120000)),
+  ]);
+  return buffer;
+}
+// המתנה לתוצאת ממסר ברקע (לא חוסם את תור הבוט) + נפילה לשרשרת ישירה
+async function waitRelay(rid, jid, prompt) {
+  for (let i = 0; i < 75; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    const j = relayJobs.get(jid);
+    if (!j) return;
+    if (j.status === 'done' && j.imageUrl) {
+      relayJobs.delete(jid);
+      botSay(rid, `🎨 התמונה מ+16508702892: ${prompt.slice(0, 150)}`, { url: j.imageUrl, kind: 'image' });
+      return;
+    }
+    if (j.status === 'fail') break;
+  }
+  relayJobs.delete(jid);
+  // נפילה ליצירה ישירה (אם יש מפתחות בשרת)
+  try {
+    const buffer = await directImage(prompt);
+    if (buffer && buffer.length > 5000) {
+      botSay(rid, prompt.slice(0, 200), { url: saveSiteMedia(buffer, 'jpg'), kind: 'image' });
+      return;
+    }
+  } catch {}
+  botSay(rid, '😢 יצירת התמונה נכשלה — הבוט בוואטסאפ לא ענה וגם אין מפתח תמונות בשרת.');
+}
+
 /* ---------- 🤖 בוט האתר — כל פקודות הקבוצה (אותם מנועים כמו בוואטסאפ) ---------- */
 function saveSiteMedia(buf, ext) {
   const mdir = path.join(DIR, 'site', 'media');
@@ -505,16 +550,26 @@ async function siteAnswer(job, histArr) {
   };
   const aiRace = (p) => Promise.race([chatAI(p, []), new Promise((res) => setTimeout(() => res(null), 25000))]);
   try {
-    // 🎨 תמונה
+    // 🎨 תמונה — קודם דרך בוט הוואטסאפ (+16508702892), נפילה לישיר
     if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
       if (q.length < 2) return needQ();
-      const { buffer } = await Promise.race([
-        generateImage(q.slice(0, 300)),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('img-timeout')), 120000)),
-      ]);
-      if (buffer && buffer.length > 5000) {
-        say(q.slice(0, 200), { url: saveSiteMedia(buffer, 'jpg'), kind: 'image' });
-      } else say('😢 יצירת התמונה נכשלה — נסה תיאור אחר.');
+      const prompt = q.slice(0, 300);
+      if (RELAY_SECRET) {
+        const waiting = [...relayJobs.values()].filter((j) => j && j.status === 'wait').length;
+        if (waiting < 3) {
+          const jid = 'rj' + (relaySeq++) + Date.now().toString(36);
+          relayJobs.set(jid, { prompt, room: job.roomId, status: 'wait', imageUrl: '', at: Date.now() });
+          say('🎨 נשלח לבוט הוואטסאפ (+16508702892) — אחזיר את התמונה לכאן כשמוכנה ⏳');
+          waitRelay(job.roomId, jid, prompt).catch(() => {});
+          return true;
+        }
+      }
+      try {
+        const buffer = await directImage(prompt);
+        if (buffer && buffer.length > 5000) {
+          say(prompt.slice(0, 200), { url: saveSiteMedia(buffer, 'jpg'), kind: 'image' });
+        } else say('😢 יצירת התמונה נכשלה — נסה תיאור אחר.');
+      } catch { say('😢 יצירת התמונה נכשלה כרגע.'); }
       return true;
     }
     // ⭐ סטיקר מתיאור
