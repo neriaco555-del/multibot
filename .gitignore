@@ -16,6 +16,7 @@ site-status.json
 site-reports.json
 site-meta.json
 site-accounts.json
+tg-points.json
 # מדיה כבדה לא מקושרת + העלאות משתמשים
 *.mp4
 wh-s*.jpg
