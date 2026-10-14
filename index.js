@@ -2208,9 +2208,11 @@ async function handleChatMessage(sock, botJid, msg) {
             const _last = dmLockAt.get(remoteJid) || 0;
             if (Date.now() - _last > 5 * 60 * 1000) {
               dmLockAt.set(remoteJid, Date.now());
-              const _gurl = (config.MAIN_GROUP_URL || '').trim();
+              const _ch = (config.CHANNEL_URL || '').trim();
               await sock.sendMessage(remoteJid, { text:
-                `🤖 *הבוט פועל רק בקבוצת מולטי בוט 9️⃣.*\n\nלהצטרפות:\n${_gurl}` });
+                `📢 *הקבוצה של מולטי בוט נחסמה ע"י וואטסאפ.*\n\n` +
+                `📰 כדי להישאר מעודכנים, עקבו אחרי ערוץ העדכונים:\n${_ch}\n\n` +
+                `ברגע שתיפתח קבוצה חדשה — נודיע בערוץ ✅` });
             }
             return;
           }

@@ -73,7 +73,9 @@ export const config = {
   PRO_PROMO: process.env.PRO_PROMO !== undefined ? process.env.PRO_PROMO : '💎 *כדי לעשות מנוי פרו פנו אלי:* 0555655217',
   // --- קבוצה ראשית (שורת סיום אוטומטית בסוף כל הודעת בוט) ---
   // קישור הזמנה לקבוצה הראשית של הבוט. ריק = בלי שורה.
-  MAIN_GROUP_URL: (process.env.MAIN_GROUP_URL || 'https://chat.whatsapp.com/Lmjlssc2aybLDV9bwyjv77').trim(),
+  MAIN_GROUP_URL: (process.env.MAIN_GROUP_URL || '').trim(),
+  // --- ערוץ עדכונים (נשלח בהודעות פרטיות כשהקבוצה חסומה) ---
+  CHANNEL_URL: (process.env.CHANNEL_URL || 'https://whatsapp.com/channel/0029Vb8quoG7Noa0OoPO281B').trim(),
   // --- סשן נוסף / חיבור חשבון אחר (אופציונלי, לא שובר את הקיים) ---
   // תיקיית התחברות (ברירת מחדל auth_info). לסשן שני מריצים עם AUTH_DIR=./auth_tablet
   AUTH_DIR: process.env.AUTH_DIR || './auth_info',

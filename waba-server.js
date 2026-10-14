@@ -18,6 +18,11 @@ import 'dotenv/config';
 import http from 'node:http';
 import fs from 'node:fs';
 import { chatAI } from './ai-chat.js';
+import { generateImage } from './ai-image.js';
+import { textToSpeech } from './ai-voice.js';
+import { searchYouTube, formatMediaResults } from './media-search.js';
+import { getWeather } from './web-search.js';
+import { currencyRates, cryptoPrices, newsHe } from './more.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.WABA_TOKEN || '';
@@ -51,89 +56,97 @@ function bumpUsage() {
   } catch { return 0; }
 }
 
-// 🏆 מערכת הגרלה/הפניות: לינק אישי, ספירת מצטרפים, כרטיסים, טבלת מובילים
-const REFS_PATH = new URL('./waba-refs.json', import.meta.url);
-const RAFFLE_DATE = process.env.RAFFLE_DATE || 'תאריך יפורסם בקרוב';
-const RAFFLE_INFO = process.env.RAFFLE_INFO || 'הגרלה בין כל המשתתפים שצירפו חברים.';
-function loadRefs() {
-  try {
-    const db = JSON.parse(fs.readFileSync(REFS_PATH, 'utf-8'));
-    db.users = db.users || {};
-    db.meta = db.meta || {};
-    return db;
-  } catch { return { users: {}, meta: {} }; }
-}
-function saveRefs(db) {
-  try { fs.writeFileSync(REFS_PATH, JSON.stringify(db)); } catch {}
-}
+// 🤖 תפריט מולטי בוט — כל היכולות האמיתיות של הבוט, בלי הגרלות
 function digitsOf(jid) {
   const d = String(jid || '').split('@')[0].replace(/\D/g, '');
   return d || null;
 }
-function makeCode(digits) {
-  // קוד קצר ויציב לפי מספר (4-6 תווים)
-  let h = 0;
-  for (const c of String(digits)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h.toString(36).toUpperCase().slice(-6).padStart(4, 'A');
-}
-function ensureUser(db, digits, name) {
-  if (!digits) return null;
-  let u = db.users[digits];
-  if (!u) {
-    u = { code: makeCode(digits), invited: [], name: '', joined_at: Date.now() };
-    db.users[digits] = u;
-  }
-  if (name && !u.name) u.name = String(name).slice(0, 40);
-  // ודא שהקוד ייחודי
-  for (const [d, o] of Object.entries(db.users)) {
-    if (d !== digits && o.code === u.code) { u.code = makeCode(digits + d); break; }
-  }
-  return u;
-}
-function findByCode(db, code) {
-  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!code) return null;
-  for (const [d, o] of Object.entries(db.users)) {
-    if (o.code === code) return d;
-  }
-  return null;
-}
-function prettyNum(d) {
-  d = String(d || '');
-  return (d.startsWith('972') && d.length === 12) ? '0' + d.slice(3) : '+' + d;
-}
-function inviteLink(db, digits) {
-  const u = db.users[digits];
-  if (!u) return '';
-  const num = db.meta.displayNumber || process.env.WABA_NUMBER || '';
-  const text = encodeURIComponent(`הצטרפתי עם קוד ${u.code}`);
-  return num ? `https://wa.me/${num}?text=${text}` : `שלחו לבוט: הצטרפתי עם קוד ${u.code}`;
-}
-const MEDALS = ['🥇', '🥈', '🥉'];
-function leaderboardText(db) {
-  const rows = Object.entries(db.users)
-    .map(([d, u]) => ({ d, n: u.invited.length, name: u.name || '' }))
-    .sort((a, b) => b.n - a.n)
-    .slice(0, 10);
-  if (!rows.length || rows[0].n === 0) {
-    return `אלו 10 המובילים שהביאו הכי הרבה שיתופים 👇👇👇\n\nעוד אין שיתופים — שלח !תפריט וקבל את הלינק האישי שלך 🔗`;
-  }
-  let out = `אלו 10 המובילים שהביאו הכי הרבה שיתופים 👇👇👇\n`;
-  rows.forEach((r, i) => {
-    const medal = MEDALS[i] || '';
-    const nm = r.name ? `${r.name} ` : '';
-    out += `\n${medal} (${i + 1}) ${nm}עם ${r.n} צירופים`;
+const pendingMb = new Map(); // digits -> {action, at} — מחכה לקלט אחרי בחירה בתפריט
+
+// 📤 העלאת מדיה ל-Meta (חינם, לא נספר במכסה) ואז שליחה
+async function uploadMedia(buf, mime, filename) {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', new Blob([buf], { type: mime }), filename);
+  const res = await fetch(`https://graph.facebook.com/v26.0/${PHONE_ID}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    body: form,
   });
-  return out;
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error('upload ' + res.status + ' ' + err.slice(0, 200));
+  }
+  return (await res.json()).id;
 }
-function textMenu() {
-  return `🤖 *תפריט ראשי*\n\n` +
-    `1️⃣ הלינק הייחודי לשיתוף — כתוב: !הלינק שלי\n` +
-    `2️⃣ מי הגיע דרכי? — כתוב: !מי-הגיע\n` +
-    `3️⃣ כמה כרטיסים יש לי? — כתוב: !כרטיסים\n` +
-    `4️⃣ מתי ההגרלה תתקיים? — כתוב: !מתי-הגרלה\n` +
-    `5️⃣ המובילים בהגרלה — כתוב: !מובילים\n\n` +
-    `_בצ'אט פרטי נפתח תפריט לחצנים אוטומטי 👇_`;
+async function sendMbImage(to, buf, caption, rt = 'individual') {
+  const id = await uploadMedia(buf, 'image/jpeg', 'img.jpg');
+  return sendWabaPayload(to, { type: 'image', image: { id, caption: String(caption || '').slice(0, 1000) } }, rt);
+}
+async function sendMbAudio(to, buf, rt = 'individual') {
+  const id = await uploadMedia(buf, 'audio/ogg', 'voice.ogg');
+  return sendWabaPayload(to, { type: 'audio', audio: { id } }, rt);
+}
+
+const MB_PROMPTS = {
+  mb_chat: '💬 *שאל את ה-AI*\nכתוב את השאלה שלך:',
+  mb_image: '🎨 *יצירת תמונה*\nכתוב תיאור (אפשר בעברית):',
+  mb_song: '🎵 *חיפוש שיר*\nכתוב שם שיר + זמר:',
+  mb_video: '🎬 *חיפוש סרטון*\nכתוב נושא:',
+  mb_tts: '🔊 *הקראה בקול*\nכתוב טקסט (עד 900 תווים):',
+  mb_weather: '🌤️ *מזג אוויר*\nכתוב שם עיר:',
+};
+function mbTextMenu() {
+  return `🤖 *מולטי בוט — תפריט*\n\n` +
+    `💬 !שאל <שאלה> — צ'אט AI\n` +
+    `🎨 !תמונה <תיאור> — יצירת תמונה\n` +
+    `🎵 !שיר <שם> — חיפוש שיר\n` +
+    `🎬 !וידאו <נושא> — חיפוש סרטון\n` +
+    `🔊 !דבר <טקסט> — הקראה בקול\n` +
+    `🌤️ !מזג <עיר> • 📰 !חדשות • 💵 !מטבע\n\n` +
+    `_בצ'אט פרטי: !תפריט פותח תפריט לחצנים_`;
+}
+const MB_HINT = `\n\n_!תפריט לתפריט 📋_`;
+// 🎯 הרצת פיצ'ר של מולטי בוט
+async function runMbFeature(to, action, input, rt, histKey) {
+  const q = String(input || '').trim().slice(0, 900);
+  if (q.length < 2 && action !== 'mb_news' && action !== 'mb_rates' && action !== 'mb_help') {
+    await sendWaba(to, 'כתוב טקסט כלשהו כדי שאפעיל את זה 🙂' + MB_HINT, rt);
+    return true;
+  }
+  try {
+    if (action === 'mb_chat') {
+      const hist = history.get(histKey) || [];
+      const { text: reply } = await chatAI(q, hist);
+      pushHistory(histKey, 'user', q);
+      pushHistory(histKey, 'assistant', reply);
+      await sendWaba(to, reply + MB_HINT, rt);
+    } else if (action === 'mb_image') {
+      const { buffer, provider } = await generateImage(q);
+      await sendMbImage(to, buffer, `🎨 ${q.slice(0, 200)}\n(${provider})` + MB_HINT, rt);
+    } else if (action === 'mb_song' || action === 'mb_video') {
+      const results = await searchYouTube(q, 3);
+      if (!results.length) await sendWaba(to, `לא מצאתי תוצאות ל"${q.slice(0, 100)}" 😕` + MB_HINT, rt);
+      else await sendWaba(to, formatMediaResults(results, action === 'mb_song' ? '🎵' : '🎬') + MB_HINT, rt);
+    } else if (action === 'mb_tts') {
+      const ogg = await textToSpeech(q);
+      await sendMbAudio(to, ogg, rt);
+    } else if (action === 'mb_weather') {
+      await sendWaba(to, (await getWeather(q)) + MB_HINT, rt);
+    } else if (action === 'mb_news') {
+      await sendWaba(to, (await newsHe(5)) + MB_HINT, rt);
+    } else if (action === 'mb_rates') {
+      await sendWaba(to, (await currencyRates()) + '\n\n' + (await cryptoPrices()) + MB_HINT, rt);
+    } else if (action === 'mb_help') {
+      await sendWaba(to, mbTextMenu(), rt);
+    } else {
+      return false;
+    }
+  } catch (e) {
+    console.error('feature fail:', action, (e.message || '').slice(0, 150));
+    await sendWaba(to, `תקלה זמנית 😕 נסה שוב בעוד דקה.` + MB_HINT, rt);
+  }
+  return true;
 }
 
 const history = new Map(); // sender -> [{role, content}]
