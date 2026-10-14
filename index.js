@@ -2222,6 +2222,21 @@ async function handleChatMessage(sock, botJid, msg) {
         }
         /** זהות לפעולות Me/דו"ח: מספר הבוט במצב כבוט, אחרת השולח. */
         const effJid = () => (actAsBot ? BOT_DIGITS + '@s.whatsapp.net' : (msg.key.participant || remoteJid));
+        // --- 🖼️ תמונת פרופיל לבוט עצמו: הבעלים שולח תמונה עם כיתוב "תמונת-בוט" בפרטי ---
+        if (!isGroup && hasImage && /תמונת-?בוט/i.test(text) &&
+            (msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS)) {
+          try {
+            const buf = await downloadMediaRetry(msg, 'botpic');
+            const meJid = (sock.user && sock.user.id) || null;
+            if (!buf || buf.length < 1000 || !meJid) throw new Error('PIC');
+            await sock.updateProfilePicture(meJid, buf);
+            await sock.sendMessage(remoteJid, { text: '🖼️ תמונת הפרופיל של הבוט עודכנה ✅' });
+          } catch (e) {
+            console.warn('botpic fail:', (e && e.message || '').slice(0, 100));
+            await sock.sendMessage(remoteJid, { text: '😢 עדכון תמונת הפרופיל נכשל.' });
+          }
+          return;
+        }
         // --- 🔒 פרטי נעול: רק הבעלים. כל השאר → קבוצה + קישור ---
         if (!isGroup) {
           const _dmOwner = msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;

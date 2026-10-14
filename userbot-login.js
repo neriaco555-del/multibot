@@ -41,15 +41,19 @@ if (mode === 'send') {
   try { pending = JSON.parse(fs.readFileSync(PENDING_FILE, 'utf-8')); } catch {}
   if (!pending.phoneCodeHash) { console.error('⛔ הרץ קודם send'); process.exit(1); }
   await client.connect();
+  const { Api } = await import('telegram');
   try {
-    await client.signInUser({ apiId, apiHash }, { phoneNumber: phone, phoneCodeHash: pending.phoneCodeHash, phoneCode: code });
+    await client.invoke(new Api.auth.SignIn({
+      phoneNumber: phone, phoneCodeHash: pending.phoneCodeHash, phoneCode: code,
+    }));
   } catch (e) {
-    const msg = String(e?.message || e);
-    if (/PASSWORD|2FA|password/i.test(msg)) {
+    const msg = String(e?.errorMessage || e?.message || e);
+    if (/SESSION_PASSWORD_NEEDED/i.test(msg)) {
       const pw = String(process.env.TG_PASSWORD || '');
-      if (!pw) { console.error('⛔ יש אימות דו-שלבי — הוסף TG_PASSWORD'); process.exit(1); }
+      if (!pw) { console.error('⛔ יש אימות דו-שלבי — הוסף TG_PASSWORD והרץ שוב sign'); process.exit(1); }
       const { password } = await import('telegram/Password.js');
-      await client.signInWithPassword({ apiId, apiHash }, password.computeCheck(await client.getPassword(), pw));
+      const pwd = await client.invoke(new Api.account.GetPassword());
+      await client.invoke(new Api.auth.CheckPassword({ password: await password.computeCheck(pwd, pw) }));
     } else throw e;
   }
   fs.writeFileSync(SESSION_FILE, client.session.save());
