@@ -53,8 +53,7 @@ async function gttsChunk(text) {
   return buf;
 }
 
-export async function textToSpeech(text) {
-  const clean = (text || '').toString().trim().slice(0, 900);
+export async function textToSpeech(text) {  const clean = (text || '').toString().trim().slice(0, 900);
   if (clean.length < 2) throw new Error('טקסט קצר מדי לדיבור');
   const chunks = splitHebrew(clean);
   if (!chunks.length) throw new Error('טקסט קצר מדי לדיבור');
@@ -76,6 +75,39 @@ export async function textToSpeech(text) {
       '-i', path.join(dir, 'list.txt'),
       '-c:a', 'libopus', '-b:a', '48k', '-ar', '24000', '-ac', '1',
       out,
+    ]);
+    const ogg = await fs.promises.readFile(out);
+    if (!ogg.length || ogg.length < 1000) throw new Error('המרה נכשלה');
+    return ogg;
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export const EDGE_VOICES = {
+  male: { id: 'he-IL-AvriNeural', label: 'גברי (אברי)', emoji: '👨' },
+  female: { id: 'he-IL-HilaNeural', label: 'נשי (הילה)', emoji: '👩' },
+};
+
+/**
+ * דיבור נוירלי בעברית (Microsoft Edge — חינם, בלי מפתח).
+ * מחזיר OGG/Opus מוכן להודעה קולית. נופל חזרה ל-textToSpeech אצל הקורא.
+ */
+export async function textToSpeechEdge(text, voiceKey = 'female') {
+  const v = EDGE_VOICES[voiceKey] || EDGE_VOICES.female;
+  const clean = (text || '').toString().trim().slice(0, 500);
+  if (clean.length < 2) throw new Error('טקסט קצר מדי לדיבור');
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'edge-'));
+  try {
+    const mp3 = path.join(dir, 'v.mp3');
+    const { EdgeTTS } = await import('node-edge-tts');
+    const t = new EdgeTTS({ voice: v.id, lang: 'he-IL', outputFormat: 'audio-24khz-48kbitrate-mono-mp3' });
+    await t.ttsPromise(clean, mp3);
+    const st = await fs.promises.stat(mp3).catch(() => null);
+    if (!st || st.size < 1000) throw new Error('EDGE_EMPTY');
+    const out = path.join(dir, 'voice.ogg');
+    await execFileAsync('ffmpeg', [
+      '-y', '-i', mp3, '-c:a', 'libopus', '-b:a', '48k', '-ar', '24000', '-ac', '1', out,
     ]);
     const ogg = await fs.promises.readFile(out);
     if (!ogg.length || ogg.length < 1000) throw new Error('המרה נכשלה');

@@ -121,7 +121,7 @@ const TG_LINK = 'https://t.me/multibot_xxx_bot';
 const START_ROUTES = {
   tmuna: 'תמונה', shir: 'שיר', video: 'וידאו', daber: 'דבר', mazeg: 'מזג',
   news: 'חדשות', trivia: 'טריוויה', poll: 'סקר', xo: 'איקס-עיגול', qr: 'qr',
-  sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו',
+  sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו', kolot: 'קולות',
 };
 const AD_TEXT =
 `🤖 מולטי בוט — העוזר החכם שלך בטלגרם!
@@ -177,6 +177,18 @@ const reminders = new Map();
 let remSeq = 1;
 // מטמון רשימות הורדה לבחירה (chatId:uid -> סרטונים)
 const dlCache = new Map();
+// 🎙️ העדפת קול להקראה (tg-voice.json)
+const VOICE_FILE = new URL('./tg-voice.json', import.meta.url);
+let voicePref = {};
+try { voicePref = JSON.parse(fs.readFileSync(VOICE_FILE, 'utf-8')); } catch {}
+function getVoice(uid) {
+  const v = voicePref[String(uid)];
+  return v === 'male' ? 'male' : 'female';
+}
+function setVoice(uid, v) {
+  voicePref[String(uid)] = v === 'male' ? 'male' : 'female';
+  try { fs.writeFileSync(VOICE_FILE, JSON.stringify(voicePref)); } catch {}
+}
 // 🫢 אמת/חובה + 🔀 מילים מעורבבות + 📋 תורנות
 const TD_TRUTH = ['מה הסוד הכי מצחיק שלך?', 'מה המאכל שאתה הכי אוהב?', 'מה החלום הכי מוזר שהיה לך?', 'איזו מתנה הכי שימחה אותך?', 'מה אתה עושה כשמשעמם לך?', 'איזה שיר אתה שר במקלחת?', 'מה הפחד הכי טיפשי שלך?', 'ספר על חבר ילדות.'];
 const TD_DARE = ['שלח תמונה של הנוף מהחלון.', 'כתוב משפט עם 3 חרוזים.', 'ספר בדיחה עכשיו.', 'תאר את היום שלך באימוג׳ים בלבד.', 'כתוב מחמאה למישהו בצ׳אט.', 'כתוב את שם הצ׳אט הפוך.', 'שלח הקלטה קולית של 5 שניות.', 'צייר לב על דף ושלח תמונה.'];
@@ -204,6 +216,7 @@ function pushHist(chatId, line) {
 const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית חופשית!)*
 
 🎨 יצירה: /תמונה · /סטיקר · /דבר (הקראה)
+🎙️ קולות להקראה: /קולות (גברי/נשי)
 🎵 מדיה: /שיר · /וידאו · /תמונות
 🌤️ מידע: /מזג · /חדשות · /דולר · /ביטקוין · /שבת · /מניה · /מדד · /קצר · /רעידת-אדמה · /זיהום-אוויר · /תרגם
 😂 כיף: /בדיחה · /חידה · /עובדה · /סיפור · /מתכון · /ברכה · /קוד · ועוד
@@ -227,13 +240,14 @@ const MENU = {
   games: '🎮 *משחקים*\n`טריוויה` — שאלות ניקוד\n`איקס-עיגול` — משחק לשניים (`/xo מספר` למהלך)\n`סקר שאלה | א | ב` — סקר מקורי\n`אמת-או-חובה` · `מילים-מעורבבות` · `תורנות`',
   dl: '⬇️ *הורדות (לשימוש אישי)*\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4 עד ~45MB',
   help: null, // נשלח HELP מלא
+  kolot: 'VOICES_MENU',
 };
 async function sendMenu(chatId) {
   const kb = new InlineKeyboardBuilder()
     .text('🎨 תמונה', 'menu:tmuna').text('🎵 שיר', 'menu:shir').text('🎬 וידאו', 'menu:video').row()
     .text('🔊 הקראה', 'menu:daber').text('🌤️ מזג אוויר', 'menu:mazeg').text('📰 חדשות', 'menu:news').row()
     .text('😂 כיף', 'menu:fun').text('🎮 משחקים', 'menu:games').text('⬇️ הורדות', 'menu:dl').row()
-    .text('❓ עזרה', 'menu:help').build();
+    .text('🎙️ קולות', 'menu:kolot').text('❓ עזרה', 'menu:help').build();
   return api.sendMessage({
     chat_id: chatId,
     text: '🤖 *מה בא לך לעשות?*\n(אפשר ללחוץ — או פשוט לכתוב חופשי, אני מבין לבד 👇)',
@@ -367,14 +381,36 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     }).catch(() => say('🎬 בחר מספר 1-3 (כתוב /הורד-וידאו שוב).'));
     return true;
   }
-  // 🔊 דיבור
+  // 🔊 דיבור — בקול הנבחר (/קולות), נפילה לגיבוי
   if (['דבר', 'קול', 'say', 'speak'].includes(cmd)) {
-    if (q.length < 2) return needQ('🔊 טקסט להקראה.');
+    if (q.length < 2) return needQ('🔊 טקסט להקראה. (בחירת קול: /קולות)');
     await act('record_voice');
+    const vk = getVoice(uid);
+    try {
+      const { textToSpeechEdge } = await import('./ai-voice.js');
+      const ogg = await Promise.race([
+        textToSpeechEdge(q, vk),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 90000)),
+      ]);
+      if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg') });
+      throw new Error('empty');
+    } catch {}
     try {
       const ogg = await textToSpeech(q);
       return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg') });
     } catch { return say('😢 ההקראה נכשלה — נסה טקסט קצר יותר.'); }
+  }
+  // 🎙️ תפריט קולות
+  if (['קולות', 'קול-בחירה', 'voices'].includes(cmd)) {
+    const vk = getVoice(uid);
+    const kb = new InlineKeyboardBuilder()
+      .text(`👨 גברי${vk === 'male' ? ' ✅' : ''}`, 'voice:male').text(`👩 נשי${vk === 'female' ? ' ✅' : ''}`, 'voice:female').build();
+    return api.sendMessage({
+      chat_id: chatId,
+      text: '🎙️ *בחר קול להקראה:*\nלחיצה גם משמיעה דוגמה 👇',
+      parse_mode: 'Markdown',
+      reply_markup: kb,
+    }).catch(() => say('🎙️ כתוב /קולות שוב.'));
   }
   // 🖼️ תמונות
   if (['תמונות', 'images'].includes(cmd)) {
@@ -836,14 +872,36 @@ bot.on('callback_query', async (ctx) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     if (data.startsWith('menu:')) {
-      if (!MENU[data.slice(5)] && data.slice(5) !== 'help') return;
-      if (data.slice(5) === 'help') return sendSafe(chatId, HELP);
-      const txt = MENU[data.slice(5)];
+      const key = data.slice(5);
+      if (key === 'help') return sendSafe(chatId, HELP);
+      if (key === 'kolot') {
+        const vk = getVoice(ctx.from?.id);
+        const kb = new InlineKeyboardBuilder()
+          .text(`👨 גברי${vk === 'male' ? ' ✅' : ''}`, 'voice:male').text(`👩 נשי${vk === 'female' ? ' ✅' : ''}`, 'voice:female').build();
+        return api.sendMessage({ chat_id: chatId, text: '🎙️ *בחר קול:*', parse_mode: 'Markdown', reply_markup: kb }).catch(() => {});
+      }
+      if (!MENU[key]) return;
+      const txt = MENU[key];
       if (txt) return sendSafe(chatId, txt);
       return;
     }
-    if (data.startsWith('dlv:')) {
-      const i = parseInt(data.slice(4), 10);
+    if (data.startsWith('voice:')) {
+      const v = data.slice(6) === 'male' ? 'male' : 'female';
+      setVoice(ctx.from?.id, v);
+      await api.sendChatAction({ chat_id: chatId, action: 'record_voice' }).catch(() => {});
+      try {
+        const { textToSpeechEdge } = await import('./ai-voice.js');
+        const ogg = await Promise.race([
+          textToSpeechEdge(v === 'male' ? 'היי! אני הקול הגברי שלך. ככה אשמע מעכשיו.' : 'היי! אני הקול הנשי שלך. ככה אשמע מעכשיו.', v),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 90000)),
+        ]);
+        if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg'), caption: v === 'male' ? '👨 נבחר קול גברי ✅' : '👩 נבחר קול נשי ✅' });
+        throw new Error('empty');
+      } catch {
+        return sendSafe(chatId, (v === 'male' ? '👨 נבחר קול גברי ✅' : '👩 נבחר קול נשי ✅') + ' (דוגמת קול נכשלה כרגע)');
+      }
+    }
+    if (data.startsWith('dlv:')) {      const i = parseInt(data.slice(4), 10);
       const uid = ctx.from?.id;
       const rec = dlCache.get(`${chatId}:${uid}`);
       if (!rec || Date.now() - rec.at > 10 * 60 * 1000 || !rec.videos[i]) {

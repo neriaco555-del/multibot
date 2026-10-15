@@ -11,6 +11,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "dotenv": "^16.4.5",
+    "node-edge-tts": "^1.2.11",
     "node-telegram-bot-api": "^2.1.0",
     "pino": "^9.4.0",
     "qrcode": "^1.5.4",

@@ -240,7 +240,7 @@ export const KNOWN_FIRST = new Set([
   'me-התחבר', 'me-חבר', 'me-login', 'me-קוד', 'me-code', 'me-נתק', 'me-logout',
   'me-מצב', 'me-סטטוס', 'me-status', 'me-זהה', 'me-זיהוי', 'me-search',
   'download-video', 'מצב-פרו', 'סטטוס-פרו', 'חפש-ערוץ', 'חיפוש-ערוץ', 'חפש-ערוצים',
-  'הורד-שיר', 'הורד-וידאו', 'סטטיסטיקה', 'פרסם', 'תפריט', 'נקה-אזהרה', 'tagall', 'rules',
+  'הורד-שיר', 'הורד-וידאו', 'סטטיסטיקה', 'פרסם', 'תפריט', 'קולות', 'נקה-אזהרה', 'tagall', 'rules',
   'kick', 'promote', 'demote', 'scramble', 'truth', 'stock', 'news', 'settings',
   'antilink', 'linkallow', 'welcome', 'welcome-test', 'cancel', 'lock', 'unlock',
   'xo', 'battle', 'image', 'draw', 'song', 'music', 'video',
