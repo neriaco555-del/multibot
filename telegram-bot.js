@@ -90,6 +90,73 @@ function addPoint(uid, name, n = 1) {
   points[uid] = (points[uid] || 0) + n;
   savePts();
 }
+/* ---------- 📊 מעקב משתמשים (לבעלים) ---------- */
+const OWNER_ID = String(process.env.TG_OWNER_ID || '8690013540');
+const USERS_FILE = new URL('./tg-users.json', import.meta.url);
+let users = {};
+try { users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8')); } catch {}
+let usersTimer = null;
+function saveUsers() {
+  clearTimeout(usersTimer);
+  usersTimer = setTimeout(() => { try { fs.writeFileSync(USERS_FILE, JSON.stringify(users)); } catch {} }, 5000);
+}
+const bootAt = Date.now();
+function touchUser(ctx, cmd, count = true) {
+  try {
+    const f = ctx.from || {};
+    const id = String(f.id);
+    const u = users[id] || (users[id] = { name: '', username: '', first: 0, msgs: 0, cmds: {} });
+    const nm = `${f.first_name || ''} ${f.last_name || ''}`.trim() || f.username || '';
+    if (nm) u.name = String(nm).slice(0, 40);
+    if (f.username) u.username = String(f.username).slice(0, 40);
+    if (!u.first) u.first = Date.now();
+    u.last = Date.now();
+    if (count) u.msgs = (u.msgs || 0) + 1;
+    if (cmd) u.cmds[cmd] = (u.cmds[cmd] || 0) + 1;
+    saveUsers();
+  } catch {}
+}
+/* ---------- 📣 פרסום + דיפ-לינקים ---------- */
+const TG_LINK = 'https://t.me/multibot_xxx_bot';
+const START_ROUTES = {
+  tmuna: 'תמונה', shir: 'שיר', video: 'וידאו', daber: 'דבר', mazeg: 'מזג',
+  news: 'חדשות', trivia: 'טריוויה', poll: 'סקר', xo: 'איקס-עיגול', qr: 'qr',
+  sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו',
+};
+const AD_TEXT =
+`🤖 מולטי בוט — העוזר החכם שלך בטלגרם!
+
+לחץ על מה שמעניין אותך ומתחילים 👇
+
+🎨 יצירת תמונות:
+${TG_LINK}?start=tmuna
+
+🎵 חיפוש שירים:
+${TG_LINK}?start=shir
+
+⬇️ הורדת שירים וסרטונים:
+${TG_LINK}?start=dl
+
+🔊 הקראה בקול:
+${TG_LINK}?start=daber
+
+🌤️ מזג אוויר:
+${TG_LINK}?start=mazeg
+
+📰 חדשות:
+${TG_LINK}?start=news
+
+🎯 טריוויה:
+${TG_LINK}?start=trivia
+
+📊 סקרים:
+${TG_LINK}?start=poll
+
+🎮 איקס-עיגול:
+${TG_LINK}?start=xo
+
+💬 או פשוט כתוב שאלה — הבוט מבין עברית!
+${TG_LINK}?start=help`;
 
 /* ---------- טריוויה / איקס-עיגול / תזכורות ---------- */
 const trivia = new Map(); // chatId -> {a, timer}
@@ -140,6 +207,7 @@ const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית
 😂 כיף: /בדיחה · /חידה · /עובדה · /סיפור · /מתכון · /ברכה · /קוד · ועוד
 🎲 מהיר: /קוביה · /מטבע · /בחר · /הגרלה · /סיסמה · /מספר · /צבע · /תאריך · /שעה · /עד
 🐶 חיות: /כלב · /חתול · /שועל · 🛒 /קנה · 🔳 /qr
+⬇️ הורדות: /הורד-שיר · /הורד-וידאו (לשימוש אישי)
 🎮 משחקים: /טריוויה · /איקס-עיגול · /סקר · /תזכורת · /נקודות · /טופ
 🫢 /אמת-או-חובה · 🔀 /מילים-מעורבבות · 📋 /תורנות · 💬 /סכם-צאט
 📸 /תמונת-פרופיל (בתשובה למשתמש) · 🌐 /אתר (בניית אתר חי!)
@@ -222,6 +290,43 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   if (['וידאו', 'סרטון', 'סרטונים', 'יוטיוב', 'video'].includes(cmd)) {
     if (q.length < 2) return needQ('🎬 נושא לסרטון.');
     return say(formatMediaResults(await searchYouTube(q, 3), '🎬'));
+  }
+  // ⬇️ הורדת שיר (MP3)
+  if (['הורד-שיר', 'הורד-שירים', 'download-song', 'dl-song'].includes(cmd)) {
+    if (q.length < 2) return needQ('⬇️ שם שיר + זמר להורדה. דוגמה: /הורד-שיר עומר אדם\n(לשימוש אישי בלבד)');
+    if (!heavyCool(uid, 60)) return say('⬇️ לאט לאט 🙂 חכה דקה בין הורדות.');
+    await act('upload_document');
+    await say(`⬇️ מוריד: "${q.slice(0, 80)}"... (עד דקה-שתיים) ⏳`).catch(() => {});
+    try {
+      const { downloadYouTubeAudio } = await import('./aimedia.js');
+      const res = await searchYouTube(q, 3);
+      if (!res.length) return say('😢 לא מצאתי את השיר.');
+      await say(`🎵 מצאתי: *${res[0].title}*\nמוריד MP3...`.slice(0, 300)).catch(() => {});
+      const { buffer, title } = await Promise.race([
+        downloadYouTubeAudio(res[0].url, 25),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 360000)),
+      ]);
+      if (!buffer || buffer.length < 10000) return say('😢 ההורדה נכשלה — נסה שיר אחר.');
+      return api.sendAudio({ chat_id: chatId, audio: up(buffer, 'song.mp3'), title: title.slice(0, 60), performer: (res[0].author || '').slice(0, 60) });
+    } catch { return say('😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.'); }
+  }
+  // ⬇️ הורדת וידאו (MP4)
+  if (['הורד-וידאו', 'הורד-סרטון', 'download-video', 'dl-video'].includes(cmd)) {
+    if (q.length < 2) return needQ('⬇️ נושא/שם להורדה. דוגמה: /הורד-וידאו שערים\n(לשימוש אישי בלבד, עד ~45MB)');
+    if (!heavyCool(uid, 90)) return say('⬇️ לאט לאט 🙂 חכה דקה וחצי בין הורדות.');
+    await act('upload_video');
+    await say(`⬇️ מוריד וידאו: "${q.slice(0, 80)}"... (יכול לקחת דקות) ⏳`).catch(() => {});
+    try {
+      const { downloadYouTubeVideo } = await import('./aimedia.js');
+      const res = await searchYouTube(q, 3);
+      if (!res.length) return say('😢 לא מצאתי.');
+      const { buffer, title } = await Promise.race([
+        downloadYouTubeVideo(res[0].url, 45),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 420000)),
+      ]);
+      if (!buffer || buffer.length < 50000) return say('😢 ההורדה נכשלה — נסה אחר.');
+      return api.sendVideo({ chat_id: chatId, video: up(buffer, 'video.mp4'), caption: noMd(title).slice(0, 200) });
+    } catch { return say('😢 ההורדה נכשלה (גדול/חסום). נסה אחר קצר יותר.'); }
   }
   // 🔊 דיבור
   if (['דבר', 'קול', 'say', 'speak'].includes(cmd)) {
@@ -419,7 +524,30 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     return say('⏰ *שלך:*\n' + mine.map(([, r]) => `• ${r.text.slice(0, 80)} — ${new Date(r.at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join('\n'));
   }
   // 📖 עזרה / מצב / שאל
-  if (['עזרה', 'help', 'start', 'תפריט'].includes(cmd)) return say(HELP);
+  if (['עזרה', 'help', 'תפריט'].includes(cmd)) return say(HELP);
+  if (cmd === 'start' && q) {
+    const r = START_ROUTES[q.trim().toLowerCase().slice(0, 20)];
+    if (r) return handleCommand(chatId, from, uid, r, '', msg);
+    return say(HELP);
+  }
+  if (cmd === 'start') return say(HELP);
+  // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
+  if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
+    return api.sendMessage({ chat_id: chatId, text: AD_TEXT });
+  }
+  // 📊 סטטיסטיקות (בעלים בלבד)
+  if (['סטטיסטיקה', 'סטטיסטיקות', 'stats', 'נתונים'].includes(cmd)) {
+    if (String(uid) !== OWNER_ID) return say('⛔ פקודת בעלים בלבד.');
+    const ids = Object.keys(users);
+    const total = ids.reduce((a, id) => a + (users[id].msgs || 0), 0);
+    const day = Date.now() - 86400000;
+    const active = ids.filter((id) => (users[id].last || 0) > day).length;
+    const top = [...ids].sort((a, b) => (users[b].msgs || 0) - (users[a].msgs || 0)).slice(0, 5);
+    const upH = Math.floor((Date.now() - bootAt) / 3600000);
+    const upM = Math.floor(((Date.now() - bootAt) % 3600000) / 60000);
+    return say(`📊 *סטטיסטיקות הבוט*\n\n👥 משתמשים: ${ids.length}\n💬 הודעות: ${total}\n🟢 פעילים (24 שעות): ${active}\n⏱️ זמן פעילות: ${upH} שע׳ ${upM} דק׳\n\n🏆 *הכי פעילים:*\n` +
+      (top.length ? top.map((id, i) => `${i + 1}. ${users[id].name || id}${users[id].username ? ' (@' + users[id].username + ')' : ''} — ${users[id].msgs} הודעות`).join('\n') : 'אין נתונים עדיין.'));
+  }
   // 🫢 אמת או חובה
   if (['אמת-או-חובה', 'truth'].includes(cmd)) {
     const kind = /חובה/.test(q) ? 'd' : (/אמת/.test(q) ? 't' : (Math.random() < 0.5 ? 't' : 'd'));
@@ -531,6 +659,7 @@ bot.on('message', async (ctx) => {
     const f = ctx.from;
     const from = `${f.first_name || ''} ${f.last_name || ''}`.trim() || f.username || 'חבר';
     addPoint(uid, from);
+    touchUser(ctx, msg.voice || msg.audio ? 'voice' : (msg.photo ? 'photo' : ''));
 
     // 🎤 הודעה קולית → תמלול → תשובה
     if (msg.voice || msg.audio) {
@@ -621,6 +750,7 @@ bot.on('message', async (ctx) => {
     const cmd0 = sp === -1 ? line : line.slice(0, sp);
     const cmd = LATIN_ALIAS[cmd0] || cmd0;
     const args = sp === -1 ? '' : line.slice(sp + 1);
+    touchUser(ctx, cmd, false);
     const done = await handleCommand(chatId, from, uid, cmd, args, msg);
     if (done !== null && done !== undefined) return;
     // צ'אט חופשי
