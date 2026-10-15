@@ -89,7 +89,18 @@ export const EDGE_VOICES = {
   female: { id: 'he-IL-HilaNeural', label: 'נשי (הילה)', emoji: '👩' },
 };
 
-/* ---------- 🎭 מאגר אפקטים קוליים (ffmpeg, בלי תלות חיצונית) ---------- */
+/* ---------- 🧹 ניקוי טקסט להקראה (בלי אימוג'ים/סימנים/קישורים) ---------- */
+export function cleanForSpeech(text) {
+  let t = String(text || '');
+  t = t.replace(/https?:\/\/\S+/g, ' '); // קישורים החוצה
+  t = t.replace(/[*_`#>\[\]()|~]/g, ' '); // סימני עיצוב החוצה
+  t = t.replace(/\p{Extended_Pictographic}/gu, ' '); // אימוג'ים החוצה
+  t = t.replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060]/g, ''); // סלקטורים ותווים בלתי נראים
+  t = t.replace(/["״']/g, ' '); // מרכאות החוצה
+  t = t.replace(/[ \t]+/g, ' ');
+  t = t.replace(/\n{3,}/g, '\n\n').trim();
+  return t.slice(0, 900);
+}
 export const VOICE_FX = {
   none:     { label: 'רגיל', emoji: '😐', filter: '' },
   robot:    { label: 'רובוט', emoji: '🤖', filter: 'vibrato=f=6.5:d=0.9,tremolo=f=8:d=0.9,flanger' },
@@ -107,7 +118,7 @@ export const VOICE_FX = {
 
 async function edgeMp3(text, voiceKey) {
   const v = EDGE_VOICES[voiceKey] || EDGE_VOICES.female;
-  const clean = (text || '').toString().trim().slice(0, 500);
+  const clean = cleanForSpeech(text).slice(0, 500);
   if (clean.length < 2) throw new Error('טקסט קצר מדי לדיבור');
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'edge-'));
   try {
@@ -135,7 +146,7 @@ export async function ttsHebrew(text, opts = {}) {
     mp3 = await edgeMp3(text, voice);
   } catch {
     // גיבוי גוגל
-    const clean = String(text || '').trim().slice(0, 900);
+    const clean = cleanForSpeech(text).slice(0, 900);
     const bufs = [];
     for (const p of splitHebrew(clean)) {
       const r = await fetch('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=iw&q=' + encodeURIComponent(p),
