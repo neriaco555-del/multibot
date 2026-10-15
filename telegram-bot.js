@@ -36,7 +36,7 @@ const api = bot.api;
 const BOT_NAME = config.BOT_NAME || 'מולטי בוט 🤖';
 let botUsername = '';
 const fileUrl = (p) => `https://api.telegram.org/file/bot${TOKEN}/${p}`;
-const up = (buf, name) => new InputFile(buf, name);
+const up = (buf, name) => new InputFile(buf, { filename: name });
 
 /* ---------- עזר ---------- */
 async function sendSafe(chatId, text, extra = {}) {
@@ -49,6 +49,21 @@ async function sendSafe(chatId, text, extra = {}) {
 }
 const stripCmd = (s) => String(s || '').replace(/^[/!]\s*/, '').replace(/@\w+\s*$/, '').trim();
 const firstWord = (s) => (String(s || '').split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
+// כינויי לטינית (מופיעים בתפריט הפקודות של טלגרם) → עברית
+const LATIN_ALIAS = {
+  tmuna: 'תמונה', sticker: 'סטיקר', shir: 'שיר', video: 'וידאו', daber: 'דבר',
+  mazeg: 'מזג', news: 'חדשות', trivia: 'טריוויה', help: 'עזרה', start: 'עזרה',
+  status: 'מצב', qr: 'qr', poll: 'סקר', song: 'שיר', translate: 'תרגם',
+};
+const noMd = (s) => String(s || '').replace(/[*_`]/g, '');
+// cooldown לפקודות כבדות (שלא ישרפו קרדיטים)
+const heavyAt = new Map();
+function heavyCool(uid, sec = 45) {
+  const now = Date.now();
+  if (now - (heavyAt.get(uid) || 0) < sec * 1000) return false;
+  heavyAt.set(uid, now);
+  return true;
+}
 async function fileBuf(fileId) {
   const f = await api.getFile({ file_id: fileId });
   const r = await fetch(fileUrl(f.file_path));
@@ -93,6 +108,29 @@ function xoText(g, xn, on) {
 }
 const reminders = new Map();
 let remSeq = 1;
+// 🫢 אמת/חובה + 🔀 מילים מעורבבות + 📋 תורנות
+const TD_TRUTH = ['מה הסוד הכי מצחיק שלך?', 'מה המאכל שאתה הכי אוהב?', 'מה החלום הכי מוזר שהיה לך?', 'איזו מתנה הכי שימחה אותך?', 'מה אתה עושה כשמשעמם לך?', 'איזה שיר אתה שר במקלחת?', 'מה הפחד הכי טיפשי שלך?', 'ספר על חבר ילדות.'];
+const TD_DARE = ['שלח תמונה של הנוף מהחלון.', 'כתוב משפט עם 3 חרוזים.', 'ספר בדיחה עכשיו.', 'תאר את היום שלך באימוג׳ים בלבד.', 'כתוב מחמאה למישהו בצ׳אט.', 'כתוב את שם הצ׳אט הפוך.', 'שלח הקלטה קולית של 5 שניות.', 'צייר לב על דף ושלח תמונה.'];
+const SCRAMBLE_WORDS = ['שלום', 'מחשב', 'טלפון', 'שמש', 'ירח', 'מוזיקה', 'ספר', 'חתול', 'כלב', 'פרח', 'עץ', 'בית'];
+const scramble = new Map(); // chatId -> {word, timer}
+const rota = new Map(); // chatId -> {members:[], idx}
+const ROTA_FILE = new URL('./tg-rota.json', import.meta.url);
+try {
+  const d = JSON.parse(fs.readFileSync(ROTA_FILE, 'utf-8'));
+  if (d && typeof d === 'object') for (const [k, v] of Object.entries(d)) rota.set(k, v);
+} catch {}
+let rotaTimer = null;
+function saveRota() {
+  clearTimeout(rotaTimer);
+  rotaTimer = setTimeout(() => { try { fs.writeFileSync(ROTA_FILE, JSON.stringify(Object.fromEntries(rota))); } catch {} }, 3000);
+}
+const chatHist = new Map(); // chatId -> [lines] לסכם-צאט
+function pushHist(chatId, line) {
+  const a = chatHist.get(chatId) || [];
+  a.push(String(line).slice(0, 220));
+  while (a.length > 40) a.shift();
+  chatHist.set(chatId, a);
+}
 
 const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית חופשית!)*
 
@@ -103,6 +141,8 @@ const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית
 🎲 מהיר: /קוביה · /מטבע · /בחר · /הגרלה · /סיסמה · /מספר · /צבע · /תאריך · /שעה · /עד
 🐶 חיות: /כלב · /חתול · /שועל · 🛒 /קנה · 🔳 /qr
 🎮 משחקים: /טריוויה · /איקס-עיגול · /סקר · /תזכורת · /נקודות · /טופ
+🫢 /אמת-או-חובה · 🔀 /מילים-מעורבבות · 📋 /תורנות · 💬 /סכם-צאט
+📸 /תמונת-פרופיל (בתשובה למשתמש) · 🌐 /אתר (בניית אתר חי!)
 💬 או פשוט כתוב שאלה — אני מבין לבד!`;
 
 /* ---------- דיספאצ'ר ---------- */
@@ -116,6 +156,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   // 🎨 תמונה — קודם דרך בוט הוואטסאפ (0503651436) → +16508702892, נפילה לישיר
   if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
     if (q.length < 2) return needQ('🎨 תאר מה ליצור. דוגמה: /תמונה חתול אסטרונאוט');
+    if (!heavyCool(uid)) return say('🎨 לאט לאט 🙂 חכה כחצי דקה בין תמונות.');
     await act('upload_photo');
     await sendSafe(chatId, `🎨 שולח לבוט הוואטסאפ... ⏳`).catch(() => {});
     const rsec = (process.env.RELAY_SECRET || '').trim();
@@ -149,6 +190,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   }
   // ⭐ סטיקר
   if (['סטיקר', 'מדבקה', 'sticker'].includes(cmd)) {
+    if (!heavyCool(uid)) return say('⭐ לאט לאט 🙂 חכה כחצי דקה בין סטיקרים.');
     const rep = msg.reply_to_message;
     const doc = rep && rep.document && String(rep.document.mime_type || '').startsWith('image/') ? rep.document : null;
     const ph = (rep && rep.photo && rep.photo.length ? rep.photo[rep.photo.length - 1] : null) || doc;
@@ -195,7 +237,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (q.length < 2) return needQ('🖼️ נושא לחיפוש.');
     const imgs = await searchImages(q, 3).catch(() => []);
     if (!imgs.length) return say('😢 לא מצאתי תמונות.');
-    await api.sendPhoto({ chat_id: chatId, photo: imgs[0].url, caption: (imgs[0].title || '').slice(0, 200) }).catch(() => {});
+    await api.sendPhoto({ chat_id: chatId, photo: imgs[0].url, caption: noMd(imgs[0].title).slice(0, 200) }).catch(() => {});
     return say('🖼️ *מצאתי:*\n' + imgs.map((r) => r.page || r.url).join('\n'));
   }
   if (['תרגם', 'תרגום', 'translate'].includes(cmd)) {
@@ -253,7 +295,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     const kind = ['כלב', 'dog'].includes(cmd) ? 'dog' : (['חתול', 'cat'].includes(cmd) ? 'cat' : 'fox');
     try {
       const { imageUrl, caption } = await animalImage(kind);
-      return api.sendPhoto({ chat_id: chatId, photo: imageUrl, caption });
+      return api.sendPhoto({ chat_id: chatId, photo: imageUrl, caption: noMd(caption) });
     } catch { return say('😢 לא מצאתי תמונה כרגע.'); }
   }
   // 🛒 קניות
@@ -349,7 +391,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     const parts = q.split('|').map((s) => s.trim()).filter(Boolean);
     if (parts.length < 3) return needQ('📊 שימוש: /סקר שאלה | א | ב\n(טלגרם פותח סקר מקורי עם כפתורים!)');
     const [qq, ...opts] = parts;
-    return api.sendPoll({ chat_id: chatId, question: qq.slice(0, 200), options: opts.slice(0, 9).map((o) => ({ text: o.slice(0, 60) })) });
+    return api.sendPoll({ chat_id: chatId, question: noMd(qq).slice(0, 200), options: opts.slice(0, 9).map((o) => ({ text: noMd(o).slice(0, 60) })) });
   }
   // ⏰ תזכורת
   if (cmd === 'תזכורת') {
@@ -378,6 +420,94 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   }
   // 📖 עזרה / מצב / שאל
   if (['עזרה', 'help', 'start', 'תפריט'].includes(cmd)) return say(HELP);
+  // 🫢 אמת או חובה
+  if (['אמת-או-חובה', 'truth'].includes(cmd)) {
+    const kind = /חובה/.test(q) ? 'd' : (/אמת/.test(q) ? 't' : (Math.random() < 0.5 ? 't' : 'd'));
+    return say(kind === 't'
+      ? `🫢 *אמת ל${from}:* ${TD_TRUTH[Math.floor(Math.random() * TD_TRUTH.length)]}`
+      : `🔥 *חובה ל${from}:* ${TD_DARE[Math.floor(Math.random() * TD_DARE.length)]}`);
+  }
+  // 🔀 מילים מעורבבות
+  if (['מילים-מעורבבות', 'scramble'].includes(cmd)) {
+    if (scramble.has(chatId)) return say('🧩 כבר יש מילה פעילה — נחשו אותה!');
+    const word = SCRAMBLE_WORDS[Math.floor(Math.random() * SCRAMBLE_WORDS.length)];
+    const a = [...word];
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; }
+    const mixed = a.join('') === word ? [...word].reverse().join('') : a.join('');
+    const rec = { word, timer: setTimeout(() => { scramble.delete(chatId); sendSafe(chatId, `⏰ הזמן עבר! המילה: *${word}*`); }, 300000) };
+    scramble.set(chatId, rec);
+    addPoint(uid, from);
+    return say(`🧩 *פענחו:* ${mixed}\nענו בלי / — הראשון מנצח (+3 נקודות, 5 דקות)`);
+  }
+  // 📋 תורנות
+  if (['תורנות'].includes(cmd)) {
+    const r = rota.get(String(chatId)) || { members: [], idx: 0 };
+    const mm = q.match(/^(הוסף|הסר|הבא|נקה)\s*([\s\S]*)$/);
+    if (mm && mm[1] === 'הוסף' && mm[2].trim()) {
+      const nm = mm[2].trim().slice(0, 20);
+      if (!r.members.includes(nm)) r.members.push(nm);
+      rota.set(String(chatId), r); saveRota();
+      return say('📋 נוסף לתורנות ✅');
+    }
+    if (mm && mm[1] === 'הסר' && mm[2].trim()) {
+      r.members = r.members.filter((x) => x !== mm[2].trim());
+      rota.set(String(chatId), r); saveRota();
+      return say('📋 הוסר.');
+    }
+    if (mm && mm[1] === 'הבא') {
+      if (!r.members.length) return say('אין תורנים. הוסף: /תורנות הוסף שם');
+      r.idx = (r.idx + 1) % r.members.length;
+      rota.set(String(chatId), r); saveRota();
+      return say(`📋 התורן הבא: *${r.members[r.idx]}*`);
+    }
+    if (mm && mm[1] === 'נקה') { rota.delete(String(chatId)); saveRota(); return say('📋 נוקה.'); }
+    return say(r.members.length ? `📋 *תורנות:*\n${r.members.map((m2, i) => `${i === (r.idx % r.members.length) ? '👉 ' : ''}${m2}`).join('\n')}` : '📋 אין תורנים. הוסף: /תורנות הוסף שם');
+  }
+  // 💬 סכם-צאט
+  if (['סכם-צאט', 'סיכום-יום', 'יומן'].includes(cmd)) {
+    const lines = (chatHist.get(chatId) || []).slice(-30);
+    if (lines.length < 3) return say('אין מספיק הודעות לסיכום 🙂');
+    try {
+      const { text } = await Promise.race([
+        chatAI(`סכם בעברית ב-5 נקודות את השיחה:\n${lines.join('\n').slice(0, 3000)}`, []),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 25000)),
+      ]);
+      return say((text || '').trim().slice(0, 1500) || 'לא הצלחתי לסכם.');
+    } catch { return say('😢 הסיכום נכשל.'); }
+  }
+  // 📸 תמונת פרופיל של משתמש (בתשובה אליו)
+  if (['תמונת-פרופיל', 'פרופיל', 'pp', 'avatar'].includes(cmd)) {
+    const target = msg.reply_to_message?.from;
+    if (!target || target.is_bot) return needQ('📸 הגב (Reply) להודעה של המשתמש עם /תמונת-פרופיל.');
+    try {
+      const ph = await api.getUserProfilePhotos({ user_id: target.id, limit: 1 });
+      const arr = ph.photos && ph.photos[0];
+      if (!arr || !arr.length) return say('😢 אין תמונת פרופיל.');
+      const big = arr[arr.length - 1];
+      const f = await api.getFile({ file_id: big.file_id });
+      return api.sendPhoto({ chat_id: chatId, photo: fileUrl(f.file_path), caption: `📸 תמונת הפרופיל של ${target.first_name || ''}` });
+    } catch { return say('😢 לא הצלחתי לשלוף.'); }
+  }
+  // 🌐 יצירת אתר
+  if (['אתר', 'אתרים', 'website', 'site'].includes(cmd)) {
+    if (q.length < 3) {
+      return say('🌐 *יצירת אתרים*\nתאר במילים מה לבנות. דוגמה:\n/אתר דף נחיתה לחנות פרחים\n\nאחזיר כתובת לאתר חי ✅');
+    }
+    await act('typing');
+    try {
+      const { generateSiteHTML, publishSite, waitForSite, newSiteId } = await import('./sites.js');
+      await say(`🌐 יוצר אתר: "${q.slice(0, 80)}"...`);
+      const res = await Promise.race([
+        generateSiteHTML(q.slice(0, 300)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
+      ]);
+      if (res.cannot) return say(`🌐 לא יכול לבנות את זה כאתר סטטי:\n${res.cannot}`);
+      const id = newSiteId();
+      const { url } = await publishSite(id, res.html, `tg site ${id}: ${q.slice(0, 80)}`);
+      const live = await waitForSite(url, 60000).catch(() => false);
+      return say(`🌐 *האתר מוכן!*${live ? ' (נבדק ✅)' : ''}\n🔗 ${url}\n\n📝 ${res.summary || ''}`.slice(0, 2000));
+    } catch (e) { return say('😢 יצירת האתר נכשלה. נסה שוב.'); }
+  }
   if (['מצב', 'status'].includes(cmd)) {
     return say(`🤖 *מצב מנועים:*\nGroq=${config.GROQ_API_KEY ? 'ON' : 'off'} · Gemini=${config.GEMINI_API_KEY ? 'ON' : 'off'} · Pollinations=ON ✅`);
   }
@@ -427,15 +557,26 @@ bot.on('message', async (ctx) => {
         } catch { return sendSafe(chatId, '😢 לא הצלחתי לראות.'); }
       }
     }
+    // 📸 תמונה בלי כיתוב בפרטי → תיאור אוטומטי + רמז
+    if (msg.photo && !msg.caption && !isGroup) {
+      try {
+        const { describeImage } = await import('./aimedia.js');
+        const ph = msg.photo[msg.photo.length - 1];
+        const ans = await describeImage(await fileBuf(ph.file_id), 'מה רואים בתמונה?');
+        return sendSafe(chatId, `👁️ ${ans}\n\n💡 הגב עליה עם /סטיקר למדבקה ✨`);
+      } catch { return sendSafe(chatId, '📸 קיבלתי תמונה! הגב עליה עם /סטיקר, או צרף כיתוב עם שאלה.');
+      }
+    }
 
     const raw = (msg.text || '').trim();
     if (!raw) return;
+    pushHist(chatId, `${from}: ${raw}`);
     const isReplyToBot = !!(msg.reply_to_message && botUsername && msg.reply_to_message.from?.username === botUsername);
     const mentioned = botUsername && raw.includes('@' + botUsername);
     let text = raw;
     let usedPrefix = false;
     if (/^[/!]/.test(text)) { usedPrefix = true; text = stripCmd(text); }
-    if (isGroup && !usedPrefix && !mentioned && !isReplyToBot && !msg.photo) return;
+    if (isGroup && !usedPrefix && !mentioned && !isReplyToBot && !msg.photo && !scramble.get(chatId)) return;
 
     // משחקים: תשובות חופשיות
     const t = text.trim();
@@ -449,6 +590,19 @@ bot.on('message', async (ctx) => {
         return sendSafe(chatId, `🎉 *נכון, ${from}!* (+5 נקודות)`);
       }
       return;
+    }
+    const sc = scramble.get(chatId);
+    if (sc && !usedPrefix) {
+      const g = t.replace(/[^א-תa-zA-Z]/g, '');
+      if (g.length >= 2 && g.length <= 20 && !/\s/.test(t.trim())) {
+        if (g === sc.word) {
+          clearTimeout(sc.timer);
+          scramble.delete(chatId);
+          addPoint(uid, from, 3);
+          return sendSafe(chatId, `🎉 *כל הכבוד ${from}! פענחת: ${sc.word}* (+3 נקודות)`);
+        }
+        return;
+      }
     }
 
     // ניתוב טבעי
@@ -464,7 +618,8 @@ bot.on('message', async (ctx) => {
       } catch {}
     }
     const sp = line.indexOf(' ');
-    const cmd = sp === -1 ? line : line.slice(0, sp);
+    const cmd0 = sp === -1 ? line : line.slice(0, sp);
+    const cmd = LATIN_ALIAS[cmd0] || cmd0;
     const args = sp === -1 ? '' : line.slice(sp + 1);
     const done = await handleCommand(chatId, from, uid, cmd, args, msg);
     if (done !== null && done !== undefined) return;
