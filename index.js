@@ -2973,6 +2973,85 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
+        // --- 🔎 חיפוש ערוצי וואטסאפ לפי שם/נושא ---
+        // (אין מאגר עולמי רשמי — מחפשים קישורי ערוצים ציבוריים ברשת ומאמתים מול וואטסאפ)
+        {
+          const m = text.match(/^(חפש-ערוץ|חיפוש-ערוץ|חפש-ערוצים)(?:\s+([\s\S]+))?$/is);
+          if (m && usedPrefix) {
+            const q = (m[2] || '').trim().slice(0, 80);
+            if (!q) {
+              await sock.sendMessage(remoteJid, { text: `🔎 *חיפוש ערוצים — איך?*\nכתוב: ${prefix}חפש-ערוץ <שם או נושא>\nדוגמה: ${prefix}חפש-ערוץ חדשות` });
+              return;
+            }
+            await sock.sendMessage(remoteJid, { text: `🔎 מחפש ערוצים בנושא "${q.slice(0, 50)}"...` });
+            async function scrapeChannelCodes(query) {
+              const found = [];
+              const rx = /whatsapp\.com\/channel\/([A-Za-z0-9_-]{10,})/gi;
+              const UA2 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
+              const queries = [`whatsapp.com/channel ${query}`, `ערוץ וואטסאפ ${query}`];
+              for (const qq of queries) {
+                for (const url of [
+                  `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qq)}`,
+                  `https://www.bing.com/search?q=${encodeURIComponent(qq)}`,
+                ]) {
+                  try {
+                    const ctrl = new AbortController();
+                    const t = setTimeout(() => ctrl.abort(), 15000);
+                    const r = await fetch(url, { headers: { 'User-Agent': UA2 }, signal: ctrl.signal });
+                    clearTimeout(t);
+                    if (!r.ok) continue;
+                    const h = await r.text();
+                    let mm;
+                    rx.lastIndex = 0;
+                    while ((mm = rx.exec(h)) && found.length < 12) {
+                      if (!found.includes(mm[1])) found.push(mm[1]);
+                    }
+                  } catch {}
+                  if (found.length >= 6) break;
+                }
+                if (found.length >= 6) break;
+              }
+              return found;
+            }
+            try {
+              const codes = await scrapeChannelCodes(q);
+              if (!codes.length) {
+                await sock.sendMessage(remoteJid, { text: `😢 לא מצאתי ערוצים ציבוריים בנושא "${q.slice(0, 50)}".\nנסה שם אחר באנגלית, או הדבק קישור ישיר לערוץ.` });
+                return;
+              }
+              const rows = [];
+              for (const code of codes.slice(0, 5)) {
+                try {
+                  const meta = await sock.newsletterMetadata('invite', code).catch(() => null);
+                  const mjids = [...scanJids(meta)];
+                  const njid = mjids.find((j) => j.endsWith('@newsletter')) || '';
+                  if (!njid) continue;
+                  const mname = (meta && typeof meta === 'object' && (meta.name || meta.title)) || '';
+                  let subs = 0;
+                  try {
+                    const s2 = await sock.newsletterSubscribers(njid).catch(() => null);
+                    subs = [...scanJids(s2)].filter((j) => !j.endsWith('@newsletter')).length;
+                  } catch {}
+                  rows.push({ code, name: mname, subs });
+                } catch {}
+              }
+              if (!rows.length) {
+                await sock.sendMessage(remoteJid, { text: `😢 מצאתי קישורים אבל אף ערוץ לא אומת (פרטי/חסום).\nנסה נושא אחר.` });
+                return;
+              }
+              rows.sort((a, b) => b.subs - a.subs);
+              const fmtN = (n) => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
+              await sock.sendMessage(remoteJid, { text:
+                `🔎 *ערוצים בנושא "${q.slice(0, 50)}":*\n\n` +
+                rows.map((r, i) => `${i + 1}. *${r.name || 'ערוץ'}*${r.subs ? ` — ${fmtN(r.subs)} עוקבים` : ''}\n🔗 https://whatsapp.com/channel/${r.code}`).join('\n\n') +
+                `\n\n💡 לפרטים על ערוץ: ${prefix}ערוץ-עוקבים <קישור> (בפרטי)` });
+            } catch (e) {
+              await sock.sendMessage(remoteJid, { text: `😢 החיפוש נכשל (${String((e && e.message) || e).slice(0, 80)}). נסה שוב.` });
+            }
+            return;
+          }
+        }
+
         // --- 📇 Me — רשת זיהוי עולמית: מי שמר אותך, חיפוש מספרים (פרטי/ניהול) ---
         {
           const svOk4 = !isGroup || remoteJid === (config.MGMT_GROUP || '');
