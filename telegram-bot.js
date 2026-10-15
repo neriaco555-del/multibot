@@ -763,7 +763,7 @@ bot.on('message', async (ctx) => {
     let usedPrefix = false;
     if (/^[/!]/.test(text)) { usedPrefix = true; text = stripCmd(text); }
     const t = text.trim();
-    if (isGroup && !usedPrefix && !mentioned && !isReplyToBot && !msg.photo && !scramble.get(chatId) && !MENU_BUTTONS[t]) return;
+    // No prefix needed — the bot answers plain text everywhere (private and groups).
 
     // משחקים: תשובות חופשיות
     const tr = trivia.get(chatId);
