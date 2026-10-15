@@ -7,7 +7,7 @@
  * - קבוצות: רק עם ! או / או בתשובה (Reply) לבוט
  */
 import 'dotenv/config';
-import { Bot, InputFile } from 'node-telegram-bot-api';
+import { Bot, InputFile, InlineKeyboardBuilder } from 'node-telegram-bot-api';
 import { config } from './config.js';
 import { chatAI } from './ai-chat.js';
 import { generateImage, generateStickerImage } from './ai-image.js';
@@ -212,6 +212,33 @@ const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית
 🫢 /אמת-או-חובה · 🔀 /מילים-מעורבבות · 📋 /תורנות · 💬 /סכם-צאט
 📸 /תמונת-פרופיל (בתשובה למשתמש) · 🌐 /אתר (בניית אתר חי!)
 💬 או פשוט כתוב שאלה — אני מבין לבד!`;
+
+/* ---------- 📋 תפריט כפתורים ---------- */
+const MENU = {
+  tmuna: '🎨 *יצירת תמונות*\nפשוט כתוב תיאור, למשל:\n`חתול אסטרונאוט על הירח`\n(אפשר גם: `/תמונה חתול אסטרונאוט`)',
+  shir: '🎵 *שירים*\nכתוב שם שיר + זמר.\nדוגמה: `עומר אדם מלכת הדור`\n(אפשר גם `/שיר ...`)',
+  video: '🎬 *סרטונים*\nכתוב נושא.\nדוגמה: `שערים של מסי`\n(אפשר גם `/וידאו ...`)',
+  daber: '🔊 *הקראה בקול*\nכתוב טקסט ואקריא אותו.\nדוגמה: `מזל טוב ליום ההולדת!`',
+  mazeg: '🌤️ *מזג אוויר*\nכתוב עיר.\nדוגמה: `מזג אוויר בחיפה`',
+  news: '📰 *חדשות*\nכתוב `חדשות` לכותרות עדכניות.',
+  fun: '😂 *כיף*\nפשוט כתוב, למשל:\n`בדיחה` · `חידה` · `עובדה על חלל`\n`סיפור דרקון` · `מתכון פנקייק` · `ברכה לאבא` · `מילון אהבה`',
+  games: '🎮 *משחקים*\n`טריוויה` — שאלות ניקוד\n`איקס-עיגול` — משחק לשניים (`/xo מספר` למהלך)\n`סקר שאלה | א | ב` — סקר מקורי\n`אמת-או-חובה` · `מילים-מעורבבות` · `תורנות`',
+  dl: '⬇️ *הורדות (לשימוש אישי)*\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4 עד ~45MB',
+  help: null, // נשלח HELP מלא
+};
+async function sendMenu(chatId) {
+  const kb = new InlineKeyboardBuilder()
+    .text('🎨 תמונה', 'menu:tmuna').text('🎵 שיר', 'menu:shir').text('🎬 וידאו', 'menu:video').row()
+    .text('🔊 הקראה', 'menu:daber').text('🌤️ מזג אוויר', 'menu:mazeg').text('📰 חדשות', 'menu:news').row()
+    .text('😂 כיף', 'menu:fun').text('🎮 משחקים', 'menu:games').text('⬇️ הורדות', 'menu:dl').row()
+    .text('❓ עזרה', 'menu:help').build();
+  return api.sendMessage({
+    chat_id: chatId,
+    text: '🤖 *מה בא לך לעשות?*\n(אפשר ללחוץ — או פשוט לכתוב חופשי, אני מבין לבד 👇)',
+    parse_mode: 'Markdown',
+    reply_markup: kb,
+  }).catch(() => api.sendMessage({ chat_id: chatId, text: '🤖 מה בא לך לעשות? כתוב /עזרה.', reply_markup: kb }));
+}
 
 /* ---------- דיספאצ'ר ---------- */
 async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
@@ -523,14 +550,18 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (!mine.length) return say('⏰ אין תזכורות פעילות.');
     return say('⏰ *שלך:*\n' + mine.map(([, r]) => `• ${r.text.slice(0, 80)} — ${new Date(r.at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join('\n'));
   }
-  // 📖 עזרה / מצב / שאל
+  // 📖 עזרה / מצב / שאל / תפריט
   if (['עזרה', 'help', 'תפריט'].includes(cmd)) return say(HELP);
+  if (['תפריט-פקודות', 'menu'].includes(cmd)) return sendMenu(chatId);
   if (cmd === 'start' && q) {
     const r = START_ROUTES[q.trim().toLowerCase().slice(0, 20)];
     if (r) return handleCommand(chatId, from, uid, r, '', msg);
-    return say(HELP);
+    return sendMenu(chatId);
   }
-  if (cmd === 'start') return say(HELP);
+  if (cmd === 'start') {
+    await say(`🤖 *היי ${from}! אני מולטי בוט* 👋\nכתוב לי כל דבר בעברית — שאלה, בקשה, רעיון — ואבין לבד. בלי לזכור פקודות!`);
+    return sendMenu(chatId);
+  }
   // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
   if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
     return api.sendMessage({ chat_id: chatId, text: AD_TEXT });
@@ -763,6 +794,23 @@ bot.on('message', async (ctx) => {
 });
 
 bot.catch((err) => console.warn('tg-handler:', (err && err.message || '').slice(0, 150)));
+
+bot.on('callback_query', async (ctx) => {
+  try {
+    const cq = ctx.callbackQuery;
+    if (!cq) return;
+    await ctx.answerCallbackQuery().catch(() => {});
+    const data = String(cq.data || '');
+    const chatId = ctx.chat?.id;
+    if (!chatId || !data.startsWith('menu:')) return;
+    const key = data.slice(5);
+    if (key === 'help') return sendSafe(chatId, HELP);
+    const txt = MENU[key];
+    if (txt) return sendSafe(chatId, txt);
+  } catch (e) {
+    console.error('tg-callback fail:', (e && e.message || '').slice(0, 120));
+  }
+});
 
 try {
   const me = await bot.api.getMe();
