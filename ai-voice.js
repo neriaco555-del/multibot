@@ -128,7 +128,7 @@ async function edgeMp3(text, voiceKey) {
  * Edge קודם, גוגל כגיבוי.
  */
 export async function ttsHebrew(text, opts = {}) {
-  const voice = opts.voice === 'male' ? 'male' : 'female';
+  const voice = (opts.voice || opts.base) === 'male' ? 'male' : 'female';
   const fx = VOICE_FX[opts.fx] ? opts.fx : 'none';
   let mp3 = null;
   try {
