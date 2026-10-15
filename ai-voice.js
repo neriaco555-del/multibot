@@ -89,6 +89,82 @@ export const EDGE_VOICES = {
   female: { id: 'he-IL-HilaNeural', label: 'נשי (הילה)', emoji: '👩' },
 };
 
+/* ---------- 🎭 מאגר אפקטים קוליים (ffmpeg, בלי תלות חיצונית) ---------- */
+export const VOICE_FX = {
+  none:     { label: 'רגיל', emoji: '😐', filter: '' },
+  robot:    { label: 'רובוט', emoji: '🤖', filter: 'vibrato=f=6.5,tremolo=f=8' },
+  alien:    { label: 'חייזר', emoji: '👽', filter: 'vibrato=f=10:d=0.8,flanger,asetrate=44100*0.85,aresample=44100,atempo=1/0.85' },
+  chipmunk: { label: 'צ׳יפמנק', emoji: '🐿️', filter: 'asetrate=44100*1.4,aresample=44100,atempo=1/1.4,tremolo=f=12:d=0.3' },
+  cat:      { label: 'חתולי', emoji: '🐱', filter: 'asetrate=44100*1.7,aresample=44100,atempo=1/1.7,vibrato=f=12:d=0.6' },
+  demon:    { label: 'שד מעמקים', emoji: '😈', filter: 'asetrate=44100*0.65,aresample=44100,atempo=1/0.65,tremolo=f=5:d=0.5' },
+  echo:     { label: 'מערה', emoji: '🦇', filter: 'aecho=0.8:0.88:60:0.4' },
+  stadium:  { label: 'אצטדיון', emoji: '🏟️', filter: 'chorus=0.5:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|1.3|0.9' },
+  phone:    { label: 'טלפון ישן', emoji: '☎️', filter: 'highpass=f=300,lowpass=f=3400' },
+  slow:     { label: 'איטי', emoji: '🐢', filter: 'atempo=0.7' },
+  fast:     { label: 'מהיר', emoji: '🐇', filter: 'atempo=1.3' },
+  whisper:  { label: 'לוחש', emoji: '🤫', filter: 'highpass=f=900,tremolo=f=25:d=0.7,volume=1.6' },
+};
+
+async function edgeMp3(text, voiceKey) {
+  const v = EDGE_VOICES[voiceKey] || EDGE_VOICES.female;
+  const clean = (text || '').toString().trim().slice(0, 500);
+  if (clean.length < 2) throw new Error('טקסט קצר מדי לדיבור');
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'edge-'));
+  try {
+    const mp3 = path.join(dir, 'v.mp3');
+    const { EdgeTTS } = await import('node-edge-tts');
+    const t = new EdgeTTS({ voice: v.id, lang: 'he-IL', outputFormat: 'audio-24khz-48kbitrate-mono-mp3' });
+    await t.ttsPromise(clean, mp3);
+    const st = await fs.promises.stat(mp3).catch(() => null);
+    if (!st || st.size < 1000) throw new Error('EDGE_EMPTY');
+    return await fs.promises.readFile(mp3);
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * TTS עברי מלא: קול (גברי/נשי) + אפקט → OGG מוכן.
+ * Edge קודם, גוגל כגיבוי.
+ */
+export async function ttsHebrew(text, opts = {}) {
+  const voice = opts.voice === 'male' ? 'male' : 'female';
+  const fx = VOICE_FX[opts.fx] ? opts.fx : 'none';
+  let mp3 = null;
+  try {
+    mp3 = await edgeMp3(text, voice);
+  } catch {
+    // גיבוי גוגל
+    const clean = String(text || '').trim().slice(0, 900);
+    const bufs = [];
+    for (const p of splitHebrew(clean)) {
+      const r = await fetch('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=iw&q=' + encodeURIComponent(p),
+        { headers: { 'User-Agent': UA } });
+      if (!r.ok) throw new Error('TTS ' + r.status);
+      const b = Buffer.from(await r.arrayBuffer());
+      if (b.length < 500) throw new Error('TTS ריק');
+      bufs.push(b);
+    }
+    if (!bufs.length) throw new Error('TTS נכשל');
+    mp3 = Buffer.concat(bufs);
+  }
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fx-'));
+  try {
+    const inp = path.join(dir, 'in.mp3');
+    const out = path.join(dir, 'voice.ogg');
+    await fs.promises.writeFile(inp, mp3);
+    const af = VOICE_FX[fx].filter
+      ? [VOICE_FX[fx].filter, 'aresample=24000'].join(',')
+      : 'aresample=24000';
+    await execFileAsync('ffmpeg', ['-y', '-i', inp, '-af', af, '-c:a', 'libopus', '-b:a', '48k', '-ac', '1', out]);
+    const ogg = await fs.promises.readFile(out);
+    if (!ogg.length || ogg.length < 1000) throw new Error('המרה נכשלה');
+    return ogg;
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /**
  * דיבור נוירלי בעברית (Microsoft Edge — חינם, בלי מפתח).
  * מחזיר OGG/Opus מוכן להודעה קולית. נופל חזרה ל-textToSpeech אצל הקורא.

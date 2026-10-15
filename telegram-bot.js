@@ -14,6 +14,7 @@ import { generateImage, generateStickerImage } from './ai-image.js';
 import { searchYouTube, formatMediaResults, rankVideos } from './media-search.js';
 import { searchImages, translateText, getWeather } from './web-search.js';
 import { textToSpeech } from './ai-voice.js';
+import { VOICE_FX } from './ai-voice.js';
 import { transcribeAudio } from './aimedia.js';
 import { normalizeNaturalCommand, aiRouteCommand, KNOWN_FIRST } from './nlp.js';
 import { resolveAiTool, runAiTool } from './aifun.js';
@@ -183,11 +184,29 @@ let voicePref = {};
 try { voicePref = JSON.parse(fs.readFileSync(VOICE_FILE, 'utf-8')); } catch {}
 function getVoice(uid) {
   const v = voicePref[String(uid)];
-  return v === 'male' ? 'male' : 'female';
+  if (v && typeof v === 'object') {
+    return { base: v.base === 'male' ? 'male' : 'female', fx: v.fx || 'none' };
+  }
+  return { base: 'female', fx: 'none' };
 }
-function setVoice(uid, v) {
-  voicePref[String(uid)] = v === 'male' ? 'male' : 'female';
+function setVoice(uid, patch) {
+  const cur = getVoice(uid);
+  const next = { base: patch.base || cur.base, fx: patch.fx !== undefined ? patch.fx : cur.fx };
+  voicePref[String(uid)] = next;
   try { fs.writeFileSync(VOICE_FILE, JSON.stringify(voicePref)); } catch {}
+  return next;
+}
+function voicesKeyboard(cur) {
+  const kb = new InlineKeyboardBuilder()
+    .text(`👨 גברי${cur.base === 'male' ? ' ✅' : ''}`, 'voice:male')
+    .text(`👩 נשי${cur.base === 'female' ? ' ✅' : ''}`, 'voice:female').row();
+  const keys = ['robot', 'alien', 'chipmunk', 'cat', 'demon', 'echo', 'stadium', 'phone', 'slow', 'fast', 'whisper'];
+  keys.forEach((k, i) => {
+    kb.text(`${VOICE_FX[k].emoji} ${VOICE_FX[k].label}${cur.fx === k ? ' ✅' : ''}`, `voicefx:${k}`);
+    if (i % 3 === 2) kb.row();
+  });
+  kb.row().text('😐 רגיל (בלי אפקט)', 'voicefx:none');
+  return kb.build();
 }
 // 🫢 אמת/חובה + 🔀 מילים מעורבבות + 📋 תורנות
 const TD_TRUTH = ['מה הסוד הכי מצחיק שלך?', 'מה המאכל שאתה הכי אוהב?', 'מה החלום הכי מוזר שהיה לך?', 'איזו מתנה הכי שימחה אותך?', 'מה אתה עושה כשמשעמם לך?', 'איזה שיר אתה שר במקלחת?', 'מה הפחד הכי טיפשי שלך?', 'ספר על חבר ילדות.'];
@@ -381,35 +400,28 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     }).catch(() => say('🎬 בחר מספר 1-3 (כתוב /הורד-וידאו שוב).'));
     return true;
   }
-  // 🔊 דיבור — בקול הנבחר (/קולות), נפילה לגיבוי
+  // 🔊 דיבור — בקול+אפקט הנבחרים (/קולות)
   if (['דבר', 'קול', 'say', 'speak'].includes(cmd)) {
-    if (q.length < 2) return needQ('🔊 טקסט להקראה. (בחירת קול: /קולות)');
+    if (q.length < 2) return needQ('🔊 טקסט להקראה. (קולות ואפקטים: /קולות)');
     await act('record_voice');
-    const vk = getVoice(uid);
     try {
-      const { textToSpeechEdge } = await import('./ai-voice.js');
+      const { ttsHebrew } = await import('./ai-voice.js');
       const ogg = await Promise.race([
-        textToSpeechEdge(q, vk),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 90000)),
+        ttsHebrew(q, getVoice(uid)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
       ]);
       if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg') });
       throw new Error('empty');
-    } catch {}
-    try {
-      const ogg = await textToSpeech(q);
-      return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg') });
     } catch { return say('😢 ההקראה נכשלה — נסה טקסט קצר יותר.'); }
   }
-  // 🎙️ תפריט קולות
+  // 🎙️ תפריט קולות ואפקטים
   if (['קולות', 'קול-בחירה', 'voices'].includes(cmd)) {
-    const vk = getVoice(uid);
-    const kb = new InlineKeyboardBuilder()
-      .text(`👨 גברי${vk === 'male' ? ' ✅' : ''}`, 'voice:male').text(`👩 נשי${vk === 'female' ? ' ✅' : ''}`, 'voice:female').build();
+    const cur = getVoice(uid);
     return api.sendMessage({
       chat_id: chatId,
-      text: '🎙️ *בחר קול להקראה:*\nלחיצה גם משמיעה דוגמה 👇',
+      text: '🎙️ *בחר קול ואפקט:*\nלחיצה שומרת + משמיעה דוגמה 👇',
       parse_mode: 'Markdown',
-      reply_markup: kb,
+      reply_markup: voicesKeyboard(cur),
     }).catch(() => say('🎙️ כתוב /קולות שוב.'));
   }
   // 🖼️ תמונות
@@ -875,10 +887,7 @@ bot.on('callback_query', async (ctx) => {
       const key = data.slice(5);
       if (key === 'help') return sendSafe(chatId, HELP);
       if (key === 'kolot') {
-        const vk = getVoice(ctx.from?.id);
-        const kb = new InlineKeyboardBuilder()
-          .text(`👨 גברי${vk === 'male' ? ' ✅' : ''}`, 'voice:male').text(`👩 נשי${vk === 'female' ? ' ✅' : ''}`, 'voice:female').build();
-        return api.sendMessage({ chat_id: chatId, text: '🎙️ *בחר קול:*', parse_mode: 'Markdown', reply_markup: kb }).catch(() => {});
+        return api.sendMessage({ chat_id: chatId, text: '🎙️ *בחר קול ואפקט:*', parse_mode: 'Markdown', reply_markup: voicesKeyboard(getVoice(ctx.from?.id)) }).catch(() => {});
       }
       if (!MENU[key]) return;
       const txt = MENU[key];
@@ -887,18 +896,35 @@ bot.on('callback_query', async (ctx) => {
     }
     if (data.startsWith('voice:')) {
       const v = data.slice(6) === 'male' ? 'male' : 'female';
-      setVoice(ctx.from?.id, v);
+      const pref = setVoice(ctx.from?.id, { base: v });
       await api.sendChatAction({ chat_id: chatId, action: 'record_voice' }).catch(() => {});
       try {
-        const { textToSpeechEdge } = await import('./ai-voice.js');
+        const { ttsHebrew } = await import('./ai-voice.js');
         const ogg = await Promise.race([
-          textToSpeechEdge(v === 'male' ? 'היי! אני הקול הגברי שלך. ככה אשמע מעכשיו.' : 'היי! אני הקול הנשי שלך. ככה אשמע מעכשיו.', v),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 90000)),
+          ttsHebrew(v === 'male' ? 'היי! אני הקול הגברי שלך. ככה אשמע מעכשיו.' : 'היי! אני הקול הנשי שלך. ככה אשמע מעכשיו.', pref),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
         ]);
         if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg'), caption: v === 'male' ? '👨 נבחר קול גברי ✅' : '👩 נבחר קול נשי ✅' });
         throw new Error('empty');
       } catch {
         return sendSafe(chatId, (v === 'male' ? '👨 נבחר קול גברי ✅' : '👩 נבחר קול נשי ✅') + ' (דוגמת קול נכשלה כרגע)');
+      }
+    }
+    if (data.startsWith('voicefx:')) {
+      const k = data.slice(8);
+      if (!VOICE_FX[k]) return;
+      const pref = setVoice(ctx.from?.id, { fx: k });
+      await api.sendChatAction({ chat_id: chatId, action: 'record_voice' }).catch(() => {});
+      try {
+        const { ttsHebrew } = await import('./ai-voice.js');
+        const ogg = await Promise.race([
+          ttsHebrew(`היי! ככה נשמע אפקט ${VOICE_FX[k].label}. אהבת?`, pref),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
+        ]);
+        if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg'), caption: `${VOICE_FX[k].emoji} נבחר: ${VOICE_FX[k].label} ✅` });
+        throw new Error('empty');
+      } catch {
+        return sendSafe(chatId, `${VOICE_FX[k].emoji} נבחר: ${VOICE_FX[k].label} ✅ (דוגמה נכשלה כרגע)`);
       }
     }
     if (data.startsWith('dlv:')) {      const i = parseInt(data.slice(4), 10);
