@@ -11,7 +11,7 @@ import { Bot, InputFile, InlineKeyboardBuilder } from 'node-telegram-bot-api';
 import { config } from './config.js';
 import { chatAI } from './ai-chat.js';
 import { generateImage, generateStickerImage } from './ai-image.js';
-import { searchYouTube, formatMediaResults } from './media-search.js';
+import { searchYouTube, formatMediaResults, rankVideos } from './media-search.js';
 import { searchImages, translateText, getWeather } from './web-search.js';
 import { textToSpeech } from './ai-voice.js';
 import { transcribeAudio } from './aimedia.js';
@@ -175,6 +175,8 @@ function xoText(g, xn, on) {
 }
 const reminders = new Map();
 let remSeq = 1;
+// מטמון רשימות הורדה לבחירה (chatId:uid -> סרטונים)
+const dlCache = new Map();
 // 🫢 אמת/חובה + 🔀 מילים מעורבבות + 📋 תורנות
 const TD_TRUTH = ['מה הסוד הכי מצחיק שלך?', 'מה המאכל שאתה הכי אוהב?', 'מה החלום הכי מוזר שהיה לך?', 'איזו מתנה הכי שימחה אותך?', 'מה אתה עושה כשמשעמם לך?', 'איזה שיר אתה שר במקלחת?', 'מה הפחד הכי טיפשי שלך?', 'ספר על חבר ילדות.'];
 const TD_DARE = ['שלח תמונה של הנוף מהחלון.', 'כתוב משפט עם 3 חרוזים.', 'ספר בדיחה עכשיו.', 'תאר את היום שלך באימוג׳ים בלבד.', 'כתוב מחמאה למישהו בצ׳אט.', 'כתוב את שם הצ׳אט הפוך.', 'שלח הקלטה קולית של 5 שניות.', 'צייר לב על דף ושלח תמונה.'];
@@ -316,14 +318,14 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
       return say('😢 יצירת הסטיקר נכשלה.');
     } catch { return say('😢 יצירת הסטיקר נכשלה כרגע.'); }
   }
-  // 🎵🎬 שיר / וידאו
+  // 🎵🎬 שיר / וידאו (מדורגים לפי רלוונטיות)
   if (['שיר', 'מוזיקה', 'נגן', 'song', 'music'].includes(cmd)) {
     if (q.length < 2) return needQ('🎵 שם שיר + זמר.');
-    return say(formatMediaResults(await searchYouTube(q, 3), '🎵'));
+    return say(formatMediaResults(rankVideos(await searchYouTube(q, 7), q).slice(0, 3), '🎵'));
   }
   if (['וידאו', 'סרטון', 'סרטונים', 'יוטיוב', 'video'].includes(cmd)) {
     if (q.length < 2) return needQ('🎬 נושא לסרטון.');
-    return say(formatMediaResults(await searchYouTube(q, 3), '🎬'));
+    return say(formatMediaResults(rankVideos(await searchYouTube(q, 7), q).slice(0, 3), '🎬'));
   }
   // ⬇️ הורדת שיר (MP3)
   if (['הורד-שיר', 'הורד-שירים', 'download-song', 'dl-song'].includes(cmd)) {
@@ -344,23 +346,26 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
       return api.sendAudio({ chat_id: chatId, audio: up(buffer, 'song.mp3'), title: title.slice(0, 60), performer: (res[0].author || '').slice(0, 60) });
     } catch { return say('😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.'); }
   }
-  // ⬇️ הורדת וידאו (MP4)
+  // ⬇️ הורדת וידאו (MP4) — רשימת הכי-רלוונטיים לבחירה
   if (['הורד-וידאו', 'הורד-סרטון', 'download-video', 'dl-video'].includes(cmd)) {
-    if (q.length < 2) return needQ('⬇️ נושא/שם להורדה. דוגמה: /הורד-וידאו שערים\n(לשימוש אישי בלבד, עד ~45MB)');
+    if (q.length < 2) return needQ('⬇️ נושא/שם להורדה. דוגמה: /הורד-וידאו שערים\n(תבחר מהרשימה, לשימוש אישי, עד ~45MB)');
     if (!heavyCool(uid, 90)) return say('⬇️ לאט לאט 🙂 חכה דקה וחצי בין הורדות.');
-    await act('upload_video');
-    await say(`⬇️ מוריד וידאו: "${q.slice(0, 80)}"... (יכול לקחת דקות) ⏳`).catch(() => {});
-    try {
-      const { downloadYouTubeVideo } = await import('./aimedia.js');
-      const res = await searchYouTube(q, 3);
-      if (!res.length) return say('😢 לא מצאתי.');
-      const { buffer, title } = await Promise.race([
-        downloadYouTubeVideo(res[0].url, 45),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 420000)),
-      ]);
-      if (!buffer || buffer.length < 50000) return say('😢 ההורדה נכשלה — נסה אחר.');
-      return api.sendVideo({ chat_id: chatId, video: up(buffer, 'video.mp4'), caption: noMd(title).slice(0, 200) });
-    } catch { return say('😢 ההורדה נכשלה (גדול/חסום). נסה אחר קצר יותר.'); }
+    await act('typing');
+    const found = rankVideos(await searchYouTube(q, 8).catch(() => []), q).slice(0, 3);
+    if (!found.length) return say('😢 לא מצאתי. נסה ניסוח אחר.');
+    dlCache.set(`${chatId}:${uid}`, { videos: found, at: Date.now() });
+    const kb = new InlineKeyboardBuilder();
+    found.forEach((v, i) => kb.text(`⬇️ ${i + 1}`, `dlv:${i}`));
+    const dur = (s) => s > 0 ? ` (${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})` : '';
+    await api.sendMessage({
+      chat_id: chatId,
+      text: `🎬 *הכי קשורים ל"${q.slice(0, 60)}":*\n\n` + found.map((v, i) =>
+        `${i + 1}. *${noMd(v.title).slice(0, 80)}*${v.author ? ` — ${noMd(v.author).slice(0, 40)}` : ''}${dur(v.seconds)}`).join('\n\n') +
+        '\n\nלחץ על מספר להורדה 👇',
+      parse_mode: 'Markdown',
+      reply_markup: kb.build(),
+    }).catch(() => say('🎬 בחר מספר 1-3 (כתוב /הורד-וידאו שוב).'));
+    return true;
   }
   // 🔊 דיבור
   if (['דבר', 'קול', 'say', 'speak'].includes(cmd)) {
@@ -829,11 +834,36 @@ bot.on('callback_query', async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
     const data = String(cq.data || '');
     const chatId = ctx.chat?.id;
-    if (!chatId || !data.startsWith('menu:')) return;
-    const key = data.slice(5);
-    if (key === 'help') return sendSafe(chatId, HELP);
-    const txt = MENU[key];
-    if (txt) return sendSafe(chatId, txt);
+    if (!chatId) return;
+    if (data.startsWith('menu:')) {
+      if (!MENU[data.slice(5)] && data.slice(5) !== 'help') return;
+      if (data.slice(5) === 'help') return sendSafe(chatId, HELP);
+      const txt = MENU[data.slice(5)];
+      if (txt) return sendSafe(chatId, txt);
+      return;
+    }
+    if (data.startsWith('dlv:')) {
+      const i = parseInt(data.slice(4), 10);
+      const uid = ctx.from?.id;
+      const rec = dlCache.get(`${chatId}:${uid}`);
+      if (!rec || Date.now() - rec.at > 10 * 60 * 1000 || !rec.videos[i]) {
+        return sendSafe(chatId, '⌛ הרשימה פגה — שלח /הורד-וידאו שוב.');
+      }
+      const v = rec.videos[i];
+      dlCache.delete(`${chatId}:${uid}`);
+      await api.sendChatAction({ chat_id: chatId, action: 'upload_video' }).catch(() => {});
+      const prog = await sendSafe(chatId, `⬇️ מוריד: "${noMd(v.title).slice(0, 80)}"... ⏳`).catch(() => null);
+      try {
+        const { downloadYouTubeVideo } = await import('./aimedia.js');
+        const { buffer, title } = await Promise.race([
+          downloadYouTubeVideo(v.url, 45),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 420000)),
+        ]);
+        if (prog?.message_id) api.deleteMessage({ chat_id: chatId, message_id: prog.message_id }).catch(() => {});
+        if (!buffer || buffer.length < 50000) return sendSafe(chatId, '😢 ההורדה נכשלה — נסה אחר.');
+        return api.sendVideo({ chat_id: chatId, video: up(buffer, 'video.mp4'), caption: noMd(title).slice(0, 200) });
+      } catch { return sendSafe(chatId, '😢 ההורדה נכשלה (גדול/חסום).'); }
+    }
   } catch (e) {
     console.error('tg-callback fail:', (e && e.message || '').slice(0, 120));
   }

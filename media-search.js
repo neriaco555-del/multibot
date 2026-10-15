@@ -30,7 +30,34 @@ async function searchFree(query, max = 3) {
     thumbnail: v.thumbnail || null,
     author: v.author?.name || '',
     duration: v.timestamp || '',
+    seconds: Number(v.duration?.seconds) || 0,
+    views: Number(v.views) || 0,
+    live: !!v.live,
   }));
+}
+
+/* ---------- דירוג רלוונטיות: התאמת כותרת + צפיות + אורך סביר ---------- */
+const normW = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 1);
+export function rankVideos(videos, query) {
+  const qw = normW(query);
+  const scored = (videos || []).map((v) => {
+    const tw = new Set(normW(v.title + ' ' + v.author));
+    let hit = 0;
+    for (const w of qw) {
+      if (tw.has(w)) hit += 2;
+      else if ([...tw].some((t) => t.includes(w) || w.includes(t))) hit += 1;
+    }
+    const cov = qw.length ? hit / (qw.length * 2) : 0;
+    let score = cov * 10;
+    score += Math.log10((v.views || 0) + 10) * 0.6; // פופולריות
+    const s = v.seconds || 0;
+    if (v.live) score -= 100; // שידור חי — לא להורדה
+    else if (s > 0 && s < 45) score -= 2; // קצרצר
+    else if (s >= 60 && s <= 1500) score += 1.5; // אורך אידיאלי להורדה
+    else if (s > 3600) score -= 3; // ארוך מדי
+    return { v, score };
+  });
+  return scored.sort((a, b) => b.score - a.score).map((x) => x.v);
 }
 
 export async function searchYouTube(query, max = 3) {
