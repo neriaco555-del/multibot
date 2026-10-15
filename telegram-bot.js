@@ -240,6 +240,13 @@ async function sendMenu(chatId) {
   }).catch(() => api.sendMessage({ chat_id: chatId, text: '🤖 מה בא לך לעשות? כתוב /עזרה.', reply_markup: kb }));
 }
 
+// כפתורי המקלדת הקבועה → פקודות (בלי צורך להקליד /)
+const MENU_BUTTONS = {
+  '🎨 תמונה': 'תמונה', '🎵 שיר': 'שיר', '🎬 וידאו': 'וידאו', '🔊 הקראה': 'דבר',
+  '🌤️ מזג אוויר': 'מזג', '📰 חדשות': 'חדשות', '🎯 טריוויה': 'טריוויה',
+  '📊 סקר': 'סקר', '📋 תפריט': 'תפריט',
+};
+
 /* ---------- דיספאצ'ר ---------- */
 async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   const cmd = String(cmdRaw || '').trim();
@@ -581,13 +588,6 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     }).catch(() => {});
     return sendMenu(chatId);
   }
-/* כפתורי המקלדת הקבועה → פקודות (בלי צורך להקליד /) */
-const MENU_BUTTONS = {
-  '🎨 תמונה': 'תמונה', '🎵 שיר': 'שיר', '🎬 וידאו': 'וידאו', '🔊 הקראה': 'דבר',
-  '🌤️ מזג אוויר': 'מזג', '📰 חדשות': 'חדשות', '🎯 טריוויה': 'טריוויה',
-  '📊 סקר': 'סקר', '📋 תפריט': 'תפריט',
-};
-const DL_HELP = '⬇️ *הורדות (לשימוש אישי)*\nכתוב:\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4';
   // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
   if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
     return api.sendMessage({ chat_id: chatId, text: AD_TEXT });
