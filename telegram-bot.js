@@ -551,7 +551,10 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     return say('⏰ *שלך:*\n' + mine.map(([, r]) => `• ${r.text.slice(0, 80)} — ${new Date(r.at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join('\n'));
   }
   // 📖 עזרה / מצב / שאל / תפריט
-  if (['עזרה', 'help', 'תפריט'].includes(cmd)) return say(HELP);
+  if (['עזרה', 'help', 'תפריט'].includes(cmd)) {
+    await say('🤖 *כל היכולות כאן למטה* 👇\n(או כתוב חופשי — אני מבין לבד)');
+    return sendMenu(chatId);
+  }
   if (['תפריט-פקודות', 'menu'].includes(cmd)) return sendMenu(chatId);
   if (cmd === 'start' && q) {
     const r = START_ROUTES[q.trim().toLowerCase().slice(0, 20)];
@@ -560,8 +563,31 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   }
   if (cmd === 'start') {
     await say(`🤖 *היי ${from}! אני מולטי בוט* 👋\nכתוב לי כל דבר בעברית — שאלה, בקשה, רעיון — ואבין לבד. בלי לזכור פקודות!`);
+    await api.sendMessage({
+      chat_id: chatId,
+      text: 'המקלדת למטה תמיד כאן 👇',
+      reply_markup: {
+        keyboard: [
+          [{ text: '🎨 תמונה' }, { text: '🎵 שיר' }],
+          [{ text: '🎬 וידאו' }, { text: '🔊 הקראה' }],
+          [{ text: '🌤️ מזג אוויר' }, { text: '📰 חדשות' }],
+          [{ text: '🎯 טריוויה' }, { text: '📊 סקר' }],
+          [{ text: '⬇️ הורדות' }, { text: '📋 תפריט' }],
+        ],
+        resize_keyboard: true,
+        is_persistent: true,
+        input_field_placeholder: 'כתוב חופשי או בחר 👇',
+      },
+    }).catch(() => {});
     return sendMenu(chatId);
   }
+/* כפתורי המקלדת הקבועה → פקודות (בלי צורך להקליד /) */
+const MENU_BUTTONS = {
+  '🎨 תמונה': 'תמונה', '🎵 שיר': 'שיר', '🎬 וידאו': 'וידאו', '🔊 הקראה': 'דבר',
+  '🌤️ מזג אוויר': 'מזג', '📰 חדשות': 'חדשות', '🎯 טריוויה': 'טריוויה',
+  '📊 סקר': 'סקר', '📋 תפריט': 'תפריט',
+};
+const DL_HELP = '⬇️ *הורדות (לשימוש אישי)*\nכתוב:\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4';
   // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
   if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
     return api.sendMessage({ chat_id: chatId, text: AD_TEXT });
@@ -736,10 +762,10 @@ bot.on('message', async (ctx) => {
     let text = raw;
     let usedPrefix = false;
     if (/^[/!]/.test(text)) { usedPrefix = true; text = stripCmd(text); }
-    if (isGroup && !usedPrefix && !mentioned && !isReplyToBot && !msg.photo && !scramble.get(chatId)) return;
+    const t = text.trim();
+    if (isGroup && !usedPrefix && !mentioned && !isReplyToBot && !msg.photo && !scramble.get(chatId) && !MENU_BUTTONS[t]) return;
 
     // משחקים: תשובות חופשיות
-    const t = text.trim();
     const tr = trivia.get(chatId);
     if (tr && /^[א-ד1-4]$/.test(t)) {
       const idx = /^[א-ד]$/.test(t) ? LET.indexOf(t) : parseInt(t, 10) - 1;
@@ -766,8 +792,9 @@ bot.on('message', async (ctx) => {
     }
 
     // ניתוב טבעי
-    let line = text;
-    try { line = normalizeNaturalCommand(text) || text; } catch {}
+    if (t === '⬇️ הורדות') return sendSafe(chatId, '⬇️ *הורדות (לשימוש אישי)*\nכתוב:\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4');
+    let line = MENU_BUTTONS[t] || text;
+    try { line = normalizeNaturalCommand(line) || line; } catch {}
     const fw = firstWord(line);
     if (!KNOWN_FIRST.has(fw) && line.length <= 300 && !trivia.get(chatId)) {
       try {
