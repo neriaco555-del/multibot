@@ -122,7 +122,7 @@ const TG_LINK = 'https://t.me/multibot_xxx_bot';
 const START_ROUTES = {
   tmuna: 'תמונה', shir: 'שיר', video: 'וידאו', daber: 'דבר', mazeg: 'מזג',
   news: 'חדשות', trivia: 'טריוויה', poll: 'סקר', xo: 'איקס-עיגול', qr: 'qr',
-  sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו', kolot: 'קולות',
+  sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו', kolot: 'קולות', gallery: 'גלריה',
 };
 const AD_TEXT =
 `🤖 מולטי בוט — העוזר החכם שלך בטלגרם!
@@ -172,7 +172,60 @@ const XO = new Map(); // chatId -> {x, o, board, turn, turnName}
 const XO_WIN = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 function xoText(g, xn, on) {
   const c = g.board.map((v, i) => v || (i + 1));
-  return `🎮 ❌ ${xn} נגד ⭕ ${on || '...'} — תור: ${g.turnName}\n\n${c[0]} | ${c[1]} | ${c[2]}\n${c[3]} | ${c[4]} | ${c[5]}\n${c[6]} | ${c[7]} | ${c[8]}\n\nמהלך: !xo מספר (1-9)`;
+  return `🎮 ❌ ${xn} נגד ⭕ ${on || '...'} — תור: ${g.turnName}\n\n${c[0]} | ${c[1]} | ${c[2]}\n${c[3]} | ${c[4]} | ${c[5]}\n${c[6]} | ${c[7]} | ${c[8]}\n\nמהלך: לחץ על משבצת 👇 (או !xo מספר)`;
+}
+function xoKeyboard(g) {
+  const kb = new InlineKeyboardBuilder();
+  g.board.forEach((v, i) => {
+    kb.text(v === 'X' ? '❌' : v === 'O' ? '⭕' : `${i + 1}`, `xo:${i + 1}`);
+    if (i % 3 === 2) kb.row();
+  });
+  if (!g.o) kb.row().text('🎮 הצטרף למשחק', 'xojoin');
+  return kb.build();
+}
+async function sendXoBoard(chatId, g) {
+  const txt = xoText(g, g.xn, g.on);
+  const markup = xoKeyboard(g);
+  try {
+    if (g.msgId) {
+      await api.editMessageText({ chat_id: chatId, message_id: g.msgId, text: txt, parse_mode: 'Markdown', reply_markup: markup });
+      return;
+    }
+  } catch {}
+  try {
+    const sent = await api.sendMessage({ chat_id: chatId, text: txt, parse_mode: 'Markdown', reply_markup: markup });
+    if (sent && sent.message_id) g.msgId = sent.message_id;
+  } catch {
+    await sendSafe(chatId, txt);
+  }
+}
+async function doXoMove(chatId, uid, name, cell) {
+  const g = XO.get(chatId);
+  if (!g) return sendSafe(chatId, 'אין משחק פעיל. פתח עם /איקס-עיגול');
+  if (!g.o) return sendXoBoard(chatId, g);
+  if (uid !== g.turn) return sendSafe(chatId, `לא תורך! תור: ${g.turnName}`);
+  const i = cell - 1;
+  if (!(i >= 0 && i < 9) || g.board[i]) return sendSafe(chatId, 'תא תפוס — בחר משבצת פנויה.');
+  g.board[i] = (uid === g.x) ? 'X' : 'O';
+  let w = null;
+  for (const [a, b, c] of XO_WIN) if (g.board[a] && g.board[a] === g.board[b] && g.board[a] === g.board[c]) w = g.board[a];
+  if (w) {
+    const winner = w === 'X' ? g.xn : g.on;
+    XO.delete(chatId);
+    addPoint(uid, name, 10);
+    g.msgId = null;
+    await sendXoBoard(chatId, { ...g, turnName: g.turnName });
+    return sendSafe(chatId, `🏆 *${winner} ניצח/ה!* (+10 נקודות)`);
+  }
+  if (g.board.every(Boolean)) {
+    XO.delete(chatId);
+    g.msgId = null;
+    await sendXoBoard(chatId, g);
+    return sendSafe(chatId, '🤝 תיקו!');
+  }
+  g.turn = (uid === g.x) ? g.o : g.x;
+  g.turnName = (uid === g.x) ? g.on : g.xn;
+  return sendXoBoard(chatId, g);
 }
 const reminders = new Map();
 let remSeq = 1;
@@ -236,6 +289,7 @@ const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית
 
 🎨 יצירה: /תמונה · /סטיקר · /דבר (הקראה)
 🎙️ קולות להקראה: /קולות (גברי/נשי)
+🖼️ הגלריה שלי: /גלריה (כל התמונות שיצרת)
 🎵 מדיה: /שיר · /וידאו · /תמונות
 🌤️ מידע: /מזג · /חדשות · /דולר · /ביטקוין · /שבת · /מניה · /מדד · /קצר · /רעידת-אדמה · /זיהום-אוויר · /תרגם
 😂 כיף: /בדיחה · /חידה · /עובדה · /סיפור · /מתכון · /ברכה · /קוד · ועוד
@@ -282,11 +336,123 @@ const MENU_BUTTONS = {
   '📊 סקר': 'סקר', '📋 תפריט': 'תפריט',
 };
 
+/* ---------- 🔘 כפתורים על כל הודעה: הקראה / רענון / פעולות ---------- */
+const sayCache = new Map(); let saySeq = 1;
+const rfCache = new Map(); let rfSeq = 1;
+const imgCache = new Map(); let imgSeq = 1;
+const songCache = new Map(); let songSeq = 1;
+function trimCache(m) { while (m.size > 300) m.delete(m.keys().next().value); }
+async function sayRich(chatId, text, opts = {}) {
+  const t = String(text || '').slice(0, 4000) || '…';
+  const kb = new InlineKeyboardBuilder();
+  const sid = String(saySeq++); sayCache.set(sid, t); trimCache(sayCache);
+  kb.text('🔊 הקראה', `say:${sid}`);
+  if (opts.refresh) {
+    const rid = String(rfSeq++); rfCache.set(rid, opts.refresh); trimCache(rfCache);
+    kb.text('🔄 עדכן', `rf:${rid}`);
+  }
+  for (const [label, data] of (opts.buttons || [])) {
+    try { kb.text(label, data); } catch {}
+  }
+  const markup = kb.build();
+  try {
+    return await api.sendMessage({ chat_id: chatId, text: t, parse_mode: 'Markdown', reply_markup: markup });
+  } catch {
+    return api.sendMessage({ chat_id: chatId, text: t.replace(/[*_`]/g, ''), reply_markup: markup });
+  }
+}
+/* 🖼️ גלריית יצירות אחרונות */
+const GAL_FILE = new URL('./tg-gallery.json', import.meta.url);
+let gallery = {};
+try { gallery = JSON.parse(fs.readFileSync(GAL_FILE, 'utf-8')); } catch {}
+function pushGallery(uid, fid, prompt) {
+  if (!fid) return;
+  const k = String(uid);
+  const a = gallery[k] || (gallery[k] = []);
+  a.unshift({ fid, prompt: String(prompt || '').slice(0, 120), at: Date.now() });
+  while (a.length > 12) a.pop();
+  try { fs.writeFileSync(GAL_FILE, JSON.stringify(gallery)); } catch {}
+}
+async function showGallery(chatId, uid) {
+  const a = gallery[String(uid)] || [];
+  if (!a.length) return sendSafe(chatId, '🖼️ עוד אין לך יצירות. צור תמונה עם /תמונה!');
+  try {
+    await api.sendMediaGroup({
+      chat_id: chatId,
+      media: a.slice(0, 6).map((g, i) => ({ type: 'photo', media: g.fid, caption: i === 0 ? `🖼️ *הגלריה שלך* (${a.length})` : undefined, parse_mode: 'Markdown' })),
+    });
+  } catch {
+    return sendSafe(chatId, '😢 הגלריה נכשלה כרגע.');
+  }
+}
+
+/* 🎨 שליחת תמונה עם כפתורי פעולה (משותף לפקודה ולכפתור "אפשרות אחרת") */
+async function sendImagePrompt(chatId, uid, prompt) {
+  const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
+  await act('upload_photo');
+  const iid = String(imgSeq++); imgCache.set(iid, { prompt }); trimCache(imgCache);
+  const kb = new InlineKeyboardBuilder()
+    .text('🎲 אפשרות אחרת', `img:${iid}`).text('🖼️ הגלריה שלי', 'gal:').build();
+  const withKb = async (buf, caption) => {
+    const sent = await api.sendPhoto({ chat_id: chatId, photo: up(buf, 'img.jpg'), caption: String(caption || '').slice(0, 200), reply_markup: kb });
+    try {
+      const ph = sent && sent.photo && sent.photo[0];
+      if (ph && ph.file_id) pushGallery(uid, ph.file_id, prompt);
+    } catch {}
+    return sent;
+  };
+  const rsec = (process.env.RELAY_SECRET || '').trim();
+  const rport = Number(process.env.RELAY_PORT || 3888);
+  if (rsec) {
+    try {
+      const ctrl = new AbortController();
+      const tt = setTimeout(() => ctrl.abort(), 250000);
+      const r = await fetch(`http://127.0.0.1:${rport}/api/relay-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-relay-secret': rsec },
+        body: JSON.stringify({ prompt: prompt.slice(0, 300) }),
+        signal: ctrl.signal,
+      }).catch(() => null);
+      clearTimeout(tt);
+      const j = r ? await r.json().catch(() => null) : null;
+      if (j && j.ok && j.image) {
+        const buf = Buffer.from(j.image, 'base64');
+        if (buf.length > 5000) return withKb(buf, prompt.slice(0, 200));
+      }
+    } catch {}
+  }
+  const { buffer } = await Promise.race([
+    generateImage(prompt.slice(0, 300)),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
+  ]);
+  if (buffer && buffer.length > 5000) return withKb(buffer, prompt.slice(0, 200));
+  throw new Error('img-fail');
+}
+
+/* ⬇️ הורדת שיר (משותף לפקודה ולכפתור) */
+async function downloadSongFlow(chatId, uid, q) {
+  const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
+  await act('upload_document');
+  const prog = await sayRich(chatId, `⬇️ מוריד: "${String(q).slice(0, 80)}"... ⏳`).catch(() => null);
+  try {
+    const { downloadYouTubeAudio } = await import('./aimedia.js');
+    const res = await searchYouTube(q, 3);
+    if (!res.length) return sayRich(chatId, '😢 לא מצאתי את השיר.');
+    const { buffer, title } = await Promise.race([
+      downloadYouTubeAudio(res[0].url, 25),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 360000)),
+    ]);
+    if (prog?.message_id) api.deleteMessage({ chat_id: chatId, message_id: prog.message_id }).catch(() => {});
+    if (!buffer || buffer.length < 10000) return sayRich(chatId, '😢 ההורדה נכשלה — נסה שיר אחר.');
+    return api.sendAudio({ chat_id: chatId, audio: up(buffer, 'song.mp3'), title: String(title || '').slice(0, 60), performer: String(res[0].author || '').slice(0, 60) });
+  } catch { return sayRich(chatId, '😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.'); }
+}
+
 /* ---------- דיספאצ'ר ---------- */
 async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   const cmd = String(cmdRaw || '').trim();
   const q = String(args || '').trim().slice(0, 500);
-  const say = (t, extra) => sendSafe(chatId, t, extra);
+  const say = (t, extra = {}) => sayRich(chatId, t, extra);
   const needQ = (usage) => say(usage || '❓ חסר טקסט. כתוב /עזרה.');
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
 
@@ -294,37 +460,14 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
     if (q.length < 2) return needQ('🎨 תאר מה ליצור. דוגמה: /תמונה חתול אסטרונאוט');
     if (!heavyCool(uid)) return say('🎨 לאט לאט 🙂 חכה כחצי דקה בין תמונות.');
-    await act('upload_photo');
-    await sendSafe(chatId, `🎨 שולח לבוט הוואטסאפ... ⏳`).catch(() => {});
-    const rsec = (process.env.RELAY_SECRET || '').trim();
-    const rport = Number(process.env.RELAY_PORT || 3888);
-    if (rsec) {
-      try {
-        const ctrl = new AbortController();
-        const tt = setTimeout(() => ctrl.abort(), 250000);
-        const r = await fetch(`http://127.0.0.1:${rport}/api/relay-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-relay-secret': rsec },
-          body: JSON.stringify({ prompt: q.slice(0, 300) }),
-          signal: ctrl.signal,
-        }).catch(() => null);
-        clearTimeout(tt);
-        const j = r ? await r.json().catch(() => null) : null;
-        if (j && j.ok && j.image) {
-          const buf = Buffer.from(j.image, 'base64');
-          if (buf.length > 5000) return api.sendPhoto({ chat_id: chatId, photo: up(buf, 'img.jpg'), caption: q.slice(0, 200) });
-        }
-      } catch {}
-    }
+    await api.sendChatAction({ chat_id: chatId, action: 'upload_photo' }).catch(() => {});
+    await say(`🎨 שולח לבוט הוואטסאפ... ⏳`).catch(() => {});
     try {
-      const { buffer } = await Promise.race([
-        generateImage(q.slice(0, 300)),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
-      ]);
-      if (buffer && buffer.length > 5000) return api.sendPhoto({ chat_id: chatId, photo: up(buffer, 'img.jpg'), caption: q.slice(0, 200) });
-      return say('😢 יצירת התמונה נכשלה — נסה תיאור אחר.');
-    } catch { return say('😢 יצירת התמונה נכשלה כרגע.'); }
+      return await sendImagePrompt(chatId, uid, q.slice(0, 300));
+    } catch { return say('😢 יצירת התמונה נכשלה — נסה תיאור אחר.'); }
   }
+  // 🖼️ הגלריה שלי
+  if (['גלריה', 'גלרייה', 'gallery'].includes(cmd)) return showGallery(chatId, uid);
   // ⭐ סטיקר
   if (['סטיקר', 'מדבקה', 'sticker'].includes(cmd)) {
     if (!heavyCool(uid)) return say('⭐ לאט לאט 🙂 חכה כחצי דקה בין סטיקרים.');
@@ -354,7 +497,9 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   // 🎵🎬 שיר / וידאו (מדורגים לפי רלוונטיות)
   if (['שיר', 'מוזיקה', 'נגן', 'song', 'music'].includes(cmd)) {
     if (q.length < 2) return needQ('🎵 שם שיר + זמר.');
-    return say(formatMediaResults(rankVideos(await searchYouTube(q, 7), q).slice(0, 3), '🎵'));
+    const sid = String(songSeq++); songCache.set(sid, { q }); trimCache(songCache);
+    return say(formatMediaResults(rankVideos(await searchYouTube(q, 7), q).slice(0, 3), '🎵'),
+      { buttons: [['⬇️ הורד את השיר', `dls:${sid}`]] });
   }
   if (['וידאו', 'סרטון', 'סרטונים', 'יוטיוב', 'video'].includes(cmd)) {
     if (q.length < 2) return needQ('🎬 נושא לסרטון.');
@@ -364,20 +509,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   if (['הורד-שיר', 'הורד-שירים', 'download-song', 'dl-song'].includes(cmd)) {
     if (q.length < 2) return needQ('⬇️ שם שיר + זמר להורדה. דוגמה: /הורד-שיר עומר אדם\n(לשימוש אישי בלבד)');
     if (!heavyCool(uid, 60)) return say('⬇️ לאט לאט 🙂 חכה דקה בין הורדות.');
-    await act('upload_document');
-    await say(`⬇️ מוריד: "${q.slice(0, 80)}"... (עד דקה-שתיים) ⏳`).catch(() => {});
-    try {
-      const { downloadYouTubeAudio } = await import('./aimedia.js');
-      const res = await searchYouTube(q, 3);
-      if (!res.length) return say('😢 לא מצאתי את השיר.');
-      await say(`🎵 מצאתי: *${res[0].title}*\nמוריד MP3...`.slice(0, 300)).catch(() => {});
-      const { buffer, title } = await Promise.race([
-        downloadYouTubeAudio(res[0].url, 25),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 360000)),
-      ]);
-      if (!buffer || buffer.length < 10000) return say('😢 ההורדה נכשלה — נסה שיר אחר.');
-      return api.sendAudio({ chat_id: chatId, audio: up(buffer, 'song.mp3'), title: title.slice(0, 60), performer: (res[0].author || '').slice(0, 60) });
-    } catch { return say('😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.'); }
+    return downloadSongFlow(chatId, uid, q);
   }
   // ⬇️ הורדת וידאו (MP4) — רשימת הכי-רלוונטיים לבחירה
   if (['הורד-וידאו', 'הורד-סרטון', 'download-video', 'dl-video'].includes(cmd)) {
@@ -438,17 +570,17 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   }
   if (['מזג', 'weather'].includes(cmd)) {
     if (q.length < 2) return needQ('🌤️ עיר. דוגמה: /מזג תל אביב');
-    try { return say(await getWeather(q)); } catch (e) { return say('😢 ' + String(e.message || '').slice(0, 150)); }
+    try { return say(await getWeather(q), { refresh: { cmd: 'מזג', args: q } }); } catch (e) { return say('😢 ' + String(e.message || '').slice(0, 150)); }
   }
-  if (['חדשות', 'news'].includes(cmd)) return say(await newsHe(5).catch((e) => '😢 ' + e.message));
-  if (['דולר'].includes(cmd)) return say(await currencyRates().catch((e) => '😢 ' + e.message));
-  if (['ביטקוין', 'קריפטו', 'bitcoin', 'crypto'].includes(cmd)) return say(await cryptoPrices().catch((e) => '😢 ' + e.message));
-  if (['שבת'].includes(cmd)) return say(await shabbatTimes(q || 'ירושלים').catch((e) => '😢 ' + e.message));
+  if (['חדשות', 'news'].includes(cmd)) return say(await newsHe(5).catch((e) => '😢 ' + e.message), { refresh: { cmd: 'חדשות', args: '' } });
+  if (['דולר'].includes(cmd)) return say(await currencyRates().catch((e) => '😢 ' + e.message), { refresh: { cmd: 'דולר', args: '' } });
+  if (['ביטקוין', 'קריפטו', 'bitcoin', 'crypto'].includes(cmd)) return say(await cryptoPrices().catch((e) => '😢 ' + e.message), { refresh: { cmd: 'ביטקוין', args: '' } });
+  if (['שבת'].includes(cmd)) return say(await shabbatTimes(q || 'ירושלים').catch((e) => '😢 ' + e.message), { refresh: { cmd: 'שבת', args: q } });
   if (['מניה', 'מניות', 'stock'].includes(cmd)) {
     if (!q) return needQ('📈 סימול, למשל: /מניה AAPL');
-    return say(await stockPrice(resolveIndexSymbol(q) || q).catch((e) => '😢 ' + e.message));
+    return say(await stockPrice(resolveIndexSymbol(q) || q).catch((e) => '😢 ' + e.message), { refresh: { cmd: 'מניה', args: q } });
   }
-  if (['מדד', 'מדדים'].includes(cmd)) return say(await stockPrice(resolveIndexSymbol(q || 'TA-35') || 'TA-35').catch((e) => '😢 ' + e.message));
+  if (['מדד', 'מדדים'].includes(cmd)) return say(await stockPrice(resolveIndexSymbol(q || 'TA-35') || 'TA-35').catch((e) => '😢 ' + e.message), { refresh: { cmd: 'מדד', args: q } });
   if (['קצר', 'קיצור', 'short'].includes(cmd)) {
     if (q.length < 4) return needQ('🔗 קישור ארוך לקיצור.');
     return say(await shortenUrl(q).catch((e) => '😢 ' + e.message));
@@ -530,7 +662,8 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
       sendSafe(chatId, `⏰ הזמן עבר! התשובה: *${LET[t.a]}. ${t.opts[t.a]}*`);
     }, 90000) };
     trivia.set(chatId, rec);
-    return say(`🎯 *טריוויה!* (5 נקודות)\n\n❓ ${t.q}\n\n` + t.opts.map((o, i) => `${LET[i]}. ${o}`).join('\n') + '\n\nענו באות או מספר.');
+    return say(`🎯 *טריוויה!* (5 נקודות)\n\n❓ ${t.q}\n\n` + t.opts.map((o, i) => `${LET[i]}. ${o}`).join('\n') + '\n\nענו באות או מספר.',
+      { buttons: [['💡 רמז', 'tr:hint'], ['⏭️ דלג', 'tr:skip']] });
   }
   if (['נקודות'].includes(cmd)) return say(`🎖️ *${from}:* ${points[uid] || 0} נקודות`);
   if (['טופ'].includes(cmd)) {
@@ -545,38 +678,20 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     }
     const g = XO.get(chatId);
     if (!g) {
-      XO.set(chatId, { x: uid, xn: from, o: null, on: '', board: Array(9).fill(''), turn: uid, turnName: from });
-      return say(`🎮 ${from} פתח משחק! יריב כותב /איקס-עיגול להצטרפות.`);
+      const ng = { x: uid, xn: from, o: null, on: '', board: Array(9).fill(''), turn: uid, turnName: from, msgId: null };
+      XO.set(chatId, ng);
+      await sendXoBoard(chatId, ng);
+      return sendSafe(chatId, `🎮 ${from} פתח משחק! יריב לוחץ 🎮 הצטרף (או כותב /איקס-עיגול).`);
     }
     if (g.x !== uid && !g.o) {
       g.o = uid; g.on = from;
-      return say(xoText(g, g.xn, g.on));
+      return sendXoBoard(chatId, g);
     }
-    return say('🎮 משחק רץ — מהלך עם /xo מספר.');
+    return sendXoBoard(chatId, g);
   }
   {
     const mm = `${cmdRaw} ${q}`.match(/^xo\s+(\d)/i);
-    if (mm) {
-      const g = XO.get(chatId);
-      if (!g) return say('אין משחק. פתח עם /איקס-עיגול');
-      if (!g.o) return say('מחכים ליריב.');
-      if (uid !== g.turn) return say(`לא תורך! תור: ${g.turnName}`);
-      const i = parseInt(mm[1], 10) - 1;
-      if (!(i >= 0 && i < 9) || g.board[i]) return say('תא תפוס — בחר 1-9 פנוי.');
-      g.board[i] = (uid === g.x) ? 'X' : 'O';
-      let w = null;
-      for (const [a, b, c] of XO_WIN) if (g.board[a] && g.board[a] === g.board[b] && g.board[a] === g.board[c]) w = g.board[a];
-      if (w) {
-        const winner = w === 'X' ? g.xn : g.on;
-        XO.delete(chatId);
-        addPoint(uid, from, 10);
-        return say(xoText(g, g.xn, g.on) + `\n\n🏆 *${winner} ניצח/ה!* (+10)`);
-      }
-      if (g.board.every(Boolean)) { XO.delete(chatId); return say(xoText(g, g.xn, g.on) + '\n\n🤝 תיקו!'); }
-      g.turn = (uid === g.x) ? g.o : g.x;
-      g.turnName = (uid === g.x) ? g.on : g.xn;
-      return say(xoText(g, g.xn, g.on));
-    }
+    if (mm) return doXoMove(chatId, uid, from, parseInt(mm[1], 10));
   }
   // 📊 סקר (טלגרם מקורי!)
   if (cmd === 'סקר') {
@@ -883,6 +998,78 @@ bot.on('callback_query', async (ctx) => {
     const data = String(cq.data || '');
     const chatId = ctx.chat?.id;
     if (!chatId) return;
+    const uid = ctx.from?.id;
+    const uname = (ctx.from?.first_name || '') || ctx.from?.username || 'חבר';
+    // 🔊 הקראת הודעה
+    if (data.startsWith('say:')) {
+      const txt = sayCache.get(data.slice(4));
+      if (!txt) return sendSafe(chatId, '⌛ ההודעה פגה.');
+      await api.sendChatAction({ chat_id: chatId, action: 'record_voice' }).catch(() => {});
+      try {
+        const { ttsHebrew } = await import('./ai-voice.js');
+        const ogg = await Promise.race([
+          ttsHebrew(txt.slice(0, 500), getVoice(uid)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
+        ]);
+        if (ogg && ogg.length > 1000) return api.sendVoice({ chat_id: chatId, voice: up(ogg, 'v.ogg') });
+        throw new Error('empty');
+      } catch { return sendSafe(chatId, '😢 ההקראה נכשלה.'); }
+    }
+    // 🔄 רענון תשובה
+    if (data.startsWith('rf:')) {
+      const r = rfCache.get(data.slice(3));
+      if (!r) return sendSafe(chatId, '⌛ פג — שלח את הפקודה שוב.');
+      const fakeMsg = { from: { id: uid }, reply_to_message: null };
+      return handleCommand(chatId, uname, uid, r.cmd, r.args || '', fakeMsg);
+    }
+    // 🎲 יצירת וריאנט + 🖼️ גלריה
+    if (data.startsWith('img:')) {
+      const rec = imgCache.get(data.slice(4));
+      if (!rec) return sendSafe(chatId, '⌛ פג — שלח /תמונה שוב.');
+      await sendSafe(chatId, `🎲 יוצר אפשרות אחרת ל"${rec.prompt.slice(0, 60)}"... ⏳`).catch(() => {});
+      try {
+        return await sendImagePrompt(chatId, uid, rec.prompt);
+      } catch { return sendSafe(chatId, '😢 נכשל — נסה שוב.'); }
+    }
+    if (data === 'gal:') return showGallery(chatId, uid);
+    // ⬇️ הורדת שיר מהתוצאות
+    if (data.startsWith('dls:')) {
+      const rec = songCache.get(data.slice(4));
+      if (!rec) return sendSafe(chatId, '⌛ פג — חפש שוב.');
+      if (!heavyCool(uid, 60)) return sendSafe(chatId, '⬇️ חכה דקה בין הורדות.');
+      return downloadSongFlow(chatId, uid, rec.q);
+    }
+    // 💡 רמז / ⏭️ דילוג טריוויה
+    if (data === 'tr:hint' || data === 'tr:skip') {
+      const tr = trivia.get(chatId);
+      if (!tr) return sendSafe(chatId, 'אין טריוויה פעילה.');
+      if (data === 'tr:skip') {
+        clearTimeout(tr.timer);
+        trivia.delete(chatId);
+        return sendSafe(chatId, `⏭️ דולג! התשובה: *${LET[tr.a]}. ${tr.opts[tr.a]}*\nשלח /טריוויה לסבב חדש.`);
+      }
+      try {
+        const { text } = await Promise.race([
+          chatAI(`תן רמז קצר אחד (עד 15 מילים) לשאלת הטריוויה, בלי לגלות את התשובה. שאלה: ${tr.q} תשובה נכונה (לא לגלות!): ${tr.opts[tr.a]}`, []),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 20000)),
+        ]);
+        return sendSafe(chatId, `💡 *רמז:* ${(text || '').trim().slice(0, 300) || 'חשוב טוב...'}`);
+      } catch { return sendSafe(chatId, '💡 חשוב טוב...'); }
+    }
+    // 🎮 הצטרפות + מהלכים בלוח
+    if (data === 'xojoin') {
+      const g = XO.get(chatId);
+      if (!g) return sendSafe(chatId, 'אין משחק פעיל.');
+      if (g.x === uid) return sendSafe(chatId, 'פתחת את המשחק — מחכה ליריב.');
+      if (g.o) return sendSafe(chatId, 'המשחק מלא כבר.');
+      g.o = uid; g.on = uname;
+      return sendXoBoard(chatId, g);
+    }
+    if (data.startsWith('xo:')) {
+      const cell = parseInt(data.slice(3), 10);
+      if (!(cell >= 1 && cell <= 9)) return;
+      return doXoMove(chatId, uid, uname, cell);
+    }
     if (data.startsWith('menu:')) {
       const key = data.slice(5);
       if (key === 'help') return sendSafe(chatId, HELP);
@@ -927,7 +1114,7 @@ bot.on('callback_query', async (ctx) => {
         return sendSafe(chatId, `${VOICE_FX[k].emoji} נבחר: ${VOICE_FX[k].label} ✅ (דוגמה נכשלה כרגע)`);
       }
     }
-    if (data.startsWith('dlv:')) {      const i = parseInt(data.slice(4), 10);
+        if (data.startsWith('dlv:')) {      const i = parseInt(data.slice(4), 10);
       const uid = ctx.from?.id;
       const rec = dlCache.get(`${chatId}:${uid}`);
       if (!rec || Date.now() - rec.at > 10 * 60 * 1000 || !rec.videos[i]) {

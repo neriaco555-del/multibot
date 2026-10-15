@@ -92,17 +92,17 @@ export const EDGE_VOICES = {
 /* ---------- 🎭 מאגר אפקטים קוליים (ffmpeg, בלי תלות חיצונית) ---------- */
 export const VOICE_FX = {
   none:     { label: 'רגיל', emoji: '😐', filter: '' },
-  robot:    { label: 'רובוט', emoji: '🤖', filter: 'vibrato=f=6.5,tremolo=f=8' },
-  alien:    { label: 'חייזר', emoji: '👽', filter: 'vibrato=f=10:d=0.8,flanger,asetrate=44100*0.85,aresample=44100,atempo=1/0.85' },
-  chipmunk: { label: 'צ׳יפמנק', emoji: '🐿️', filter: 'asetrate=44100*1.4,aresample=44100,atempo=1/1.4,tremolo=f=12:d=0.3' },
-  cat:      { label: 'חתולי', emoji: '🐱', filter: 'asetrate=44100*1.7,aresample=44100,atempo=1/1.7,vibrato=f=12:d=0.6' },
-  demon:    { label: 'שד מעמקים', emoji: '😈', filter: 'asetrate=44100*0.65,aresample=44100,atempo=1/0.65,tremolo=f=5:d=0.5' },
-  echo:     { label: 'מערה', emoji: '🦇', filter: 'aecho=0.8:0.88:60:0.4' },
-  stadium:  { label: 'אצטדיון', emoji: '🏟️', filter: 'chorus=0.5:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|1.3|0.9' },
-  phone:    { label: 'טלפון ישן', emoji: '☎️', filter: 'highpass=f=300,lowpass=f=3400' },
-  slow:     { label: 'איטי', emoji: '🐢', filter: 'atempo=0.7' },
-  fast:     { label: 'מהיר', emoji: '🐇', filter: 'atempo=1.3' },
-  whisper:  { label: 'לוחש', emoji: '🤫', filter: 'highpass=f=900,tremolo=f=25:d=0.7,volume=1.6' },
+  robot:    { label: 'רובוט', emoji: '🤖', filter: 'vibrato=f=6.5:d=0.9,tremolo=f=8:d=0.9,flanger' },
+  alien:    { label: 'חייזר', emoji: '👽', filter: 'vibrato=f=11:d=0.9,flanger=delay=15:depth=0.9,asetrate=44100*0.8,aresample=44100,atempo=1/0.8' },
+  chipmunk: { label: 'צ׳יפמנק', emoji: '🐿️', filter: 'asetrate=44100*1.5,aresample=44100,atempo=1/1.5,tremolo=f=12:d=0.4' },
+  cat:      { label: 'חתולי', emoji: '🐱', filter: 'asetrate=44100*1.8,aresample=44100,atempo=1/1.8,vibrato=f=14:d=0.7' },
+  demon:    { label: 'שד מעמקים', emoji: '😈', filter: 'asetrate=44100*0.6,aresample=44100,atempo=1/0.6,tremolo=f=5:d=0.7,acompressor=threshold=-18dB' },
+  echo:     { label: 'מערה', emoji: '🦇', filter: 'aecho=0.9:0.9:120|180:0.5|0.35' },
+  stadium:  { label: 'אצטדיון', emoji: '🏟️', filter: 'chorus=0.7:0.9:55|70|45:0.5|0.4|0.35:0.3|0.45|0.35:2|1.5|1,aecho=0.7:0.7:80:0.3' },
+  phone:    { label: 'טלפון ישן', emoji: '☎️', filter: 'highpass=f=500,lowpass=f=2800,acompressor' },
+  slow:     { label: 'איטי', emoji: '🐢', filter: 'atempo=0.6' },
+  fast:     { label: 'מהיר', emoji: '🐇', filter: 'atempo=1.4' },
+  whisper:  { label: 'לוחש', emoji: '🤫', filter: 'highpass=f=1200,tremolo=f=30:d=0.9,volume=2.0,asetrate=44100*1.1,aresample=44100,atempo=1/1.1' },
 };
 
 async function edgeMp3(text, voiceKey) {
