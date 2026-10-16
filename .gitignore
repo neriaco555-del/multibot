@@ -39,3 +39,4 @@ bot-admin-app/.gradle/
 bot-admin-app/build/
 bot-admin-app/app/build/
 bot-admin-app/local.properties
+gallery-queue.json

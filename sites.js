@@ -151,8 +151,10 @@ export async function publishSite(id, html, message) {
   const url = siteUrl(owner, id);
   // 🖼️ רישום אוטומטי לגלריה (לא מפיל את הפרסום אם נכשל)
   try {
-    const { logCreation } = await import('./gallery-log.js');
-    logCreation({ type: 'site', prompt: String(message || id).slice(0, 300), url, source: 'whatsapp' });
+    const { logCreation, queueServerPush } = await import('./gallery-log.js');
+    const prompt = String(message || id).slice(0, 300);
+    logCreation({ type: 'site', prompt, url, source: 'whatsapp' });
+    queueServerPush({ type: 'site', prompt, url, source: 'whatsapp' });
   } catch {}
   return { url, id, owner, repo };
 }

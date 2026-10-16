@@ -323,7 +323,7 @@ function rr2push(rid, item) {
   if (rr.hist.length > MAX_HIST) rr.hist = rr.hist.slice(-MAX_HIST);
   saveHist();
   roomCast(rid, { t: 'msg', ...item, room: rid });
-  // 🖼️ כל מדיה של הבוט נרשמת אוטומטית לגלריה
+  // 🖼️ כל מדיה של הבוט נרשמת אוטומטית לגלריה + נדחפת לשרת
   try {
     const mu = item?.media?.url;
     if (item?.from === BOT_NAME && typeof mu === 'string' && mu.startsWith('/media/')) {
@@ -333,7 +333,14 @@ function rr2push(rid, item) {
         : kind === 'audio' ? 'voice' : kind === 'video' ? 'video'
         : /QR|ברקוד/i.test(t) ? 'qr' : 'image';
       import('./gallery-log.js').then((m) => {
-        try { m.logCreation({ type, prompt: t.slice(0, 300), url: mu, source: 'site' }); } catch {}
+        try {
+          m.logCreation({ type, prompt: t.slice(0, 300), url: mu, source: 'site' });
+          const fp = path.join(DIR, 'site', mu.replace(/^\/media\//, ''));
+          if (!fp.includes('..')) {
+            const buf = fs.readFileSync(fp);
+            m.queueServerPush({ type, prompt: t.slice(0, 300), source: 'site', ext: mu.split('.').pop(), buffer: buf });
+          }
+        } catch {}
       }).catch(() => {});
     }
   } catch {}
@@ -1493,6 +1500,51 @@ const server = http.createServer(async (req, res) => {
       } catch {
         res.end(JSON.stringify({ items: [], counts: {}, total: 0 }));
       }
+      return;
+    }
+    if (u.pathname === '/api/gallery-push' && req.method === 'POST') {
+      // 📤 דחיפת תוצרים מהבוטים המקומיים לגלריה שבשרת (עם מפתח משותף)
+      const secret = process.env.GALLERY_SECRET || '';
+      if (!secret || String(req.headers['x-gallery-secret'] || '') !== secret) {
+        res.writeHead(secret ? 403 : 503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: secret ? 'forbidden' : 'gallery-push לא מוגדר בשרת (חסר GALLERY_SECRET)' }));
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      let tooBig = false;
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > 15 * 1048576) { tooBig = true; return; }
+        chunks.push(c);
+      });
+      req.on('end', async () => {
+        try {
+          if (tooBig) throw new Error('גדול מדי (מקסימום ~11MB לקובץ)');
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+          const type = String(body.type || 'image').slice(0, 20);
+          const prompt = String(body.prompt || '').slice(0, 300);
+          const source = String(body.source || 'whatsapp').slice(0, 20);
+          const at = Number(body.at) > 0 ? Number(body.at) : Date.now();
+          let url = '';
+          if (body.data) {
+            const buf = Buffer.from(String(body.data), 'base64');
+            if (!buf.length || buf.length < 100 || buf.length > 12 * 1048576) throw new Error('קובץ לא תקין');
+            const ext = String(body.ext || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';
+            if (!['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp3', 'wav', 'ogg', 'm4a', 'webm', 'mp4'].includes(ext.toLowerCase())) throw new Error('סיומת לא נתמכת');
+            url = saveSiteMedia(buf, ext.toLowerCase());
+          } else if (/^https?:\/\/.{5,500}$/i.test(String(body.url || ''))) {
+            url = String(body.url); // אתר/קישור חיצוני (למשל אתר שנוצר בבוט)
+          }
+          const { logCreation } = await import('./gallery-log.js');
+          logCreation({ type, prompt, url, source, extra: { at } });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, url }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String((e && e.message) || 'bad-request').slice(0, 120) }));
+        }
+      });
       return;
     }
     if (u.pathname === '/api/tts' && req.method === 'GET') {

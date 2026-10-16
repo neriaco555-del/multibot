@@ -22,3 +22,7 @@ services:
         sync: false
       - key: HF_TOKEN
         sync: false
+      # 🖼️ גלריה: דחיפת תוצרים מהבוטים — חייב להיות זהה ל-GALLERY_SECRET ב-.env המקומי!
+      # מוסיפים ידנית בדשבורד: https://dashboard.render.com → multibot-zuk0 → Environment
+      - key: GALLERY_SECRET
+        sync: false
