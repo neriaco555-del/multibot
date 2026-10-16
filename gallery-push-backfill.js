@@ -27,8 +27,7 @@ function push({ type, prompt, source, ext, buffer, url, at }) {
 function localBytes(mediaUrl) {
   try {
     if (!mediaUrl.startsWith('/media/')) return null;
-    const fp = path.join(DIR, 'site', mediaUrl.replace(/^\/media\//, ''));
-    if (fp.includes('..')) return null;
+    const fp = path.join(DIR, 'site', 'media', path.basename(String(mediaUrl)));
     const buf = fs.readFileSync(fp);
     return buf.length > 100 ? buf : null;
   } catch {

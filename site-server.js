@@ -335,11 +335,8 @@ function rr2push(rid, item) {
       import('./gallery-log.js').then((m) => {
         try {
           m.logCreation({ type, prompt: t.slice(0, 300), url: mu, source: 'site' });
-          const fp = path.join(DIR, 'site', mu.replace(/^\/media\//, ''));
-          if (!fp.includes('..')) {
-            const buf = fs.readFileSync(fp);
-            m.queueServerPush({ type, prompt: t.slice(0, 300), source: 'site', ext: mu.split('.').pop(), buffer: buf });
-          }
+          const buf = fs.readFileSync(path.join(DIR, 'site', 'media', path.basename(mu)));
+          m.queueServerPush({ type, prompt: t.slice(0, 300), source: 'site', ext: mu.split('.').pop(), buffer: buf });
         } catch {}
       }).catch(() => {});
     }
@@ -831,8 +828,7 @@ async function pumpBotVoice() {
       if (!job) break;
       try {
         roomCast(job.roomId, { t: 'typing', from: BOT_NAME, room: job.roomId });
-        const fp = path.join(DIR, 'site', String(job.voiceUrl || '').replace(/^\/media\//, ''));
-        if (fp.includes('..')) continue;
+        const fp = path.join(DIR, 'site', 'media', path.basename(String(job.voiceUrl || '')));
         const buf = await fs.promises.readFile(fp);
         const heard = await transcribeAudio(buf.slice(0, 8 * 1024 * 1024), 'voice.webm');
         if (!heard || heard.trim().length < 2) {
@@ -1439,8 +1435,8 @@ function buildGallery() {
   const live = items.filter((it) => {
     if (typeof it.url === 'string' && it.url.startsWith('/media/')) {
       try {
-        const fp = path.join(DIR, 'site', it.url.replace(/^\/media\//, ''));
-        if (fp.includes('..') || !fs.statSync(fp).isFile()) return false;
+        const fp = path.join(DIR, 'site', 'media', path.basename(it.url));
+        if (!fs.statSync(fp).isFile()) return false;
       } catch {
         return false;
       }
