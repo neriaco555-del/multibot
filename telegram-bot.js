@@ -127,38 +127,58 @@ const START_ROUTES = {
   sticker: 'סטיקר', dl: 'הורד-שיר', help: 'עזרה', dl_song: 'הורד-שיר', dl_video: 'הורד-וידאו', kolot: 'קולות', gallery: 'גלריה',
 };
 const AD_TEXT =
-`🤖 מולטי בוט — העוזר החכם שלך בטלגרם!
+`🤖 *Meet MultiBot — your smart assistant on Telegram!*
 
-לחץ על מה שמעניין אותך ומתחילים 👇
+✨ *What can it do?*
+🎨 Create AI images from words
+⭐ Custom stickers · 🔊 Text-to-speech
+🎵 Songs & videos · 🌤️ Weather · 📰 News
+🎮 Trivia, polls, reminders & more
+💬 Just write freely — it understands!
+🌍 Speaks 27 languages!
 
-🎨 יצירת תמונות:
+👇 *Tap what you like and start:*
+🎨 Images:
 ${TG_LINK}?start=tmuna
 
-🎵 חיפוש שירים:
+🎵 Songs:
 ${TG_LINK}?start=shir
 
-⬇️ הורדת שירים וסרטונים:
-${TG_LINK}?start=dl
-
-🔊 הקראה בקול:
+🔊 Text-to-speech:
 ${TG_LINK}?start=daber
 
-🌤️ מזג אוויר:
-${TG_LINK}?start=mazeg
+🎯 Trivia:
+${TG_LINK}?start=trivia
 
-📰 חדשות:
-${TG_LINK}?start=news
+💬 Or just ask anything:
+${TG_LINK}?start=help
+
+➖➖➖
+
+🤖 *הכירו את מולטי בוט — העוזר החכם שלכם בטלגרם!*
+
+✨ *מה הוא יודע לעשות?*
+🎨 ליצור תמונות AI ממילים
+⭐ סטיקרים · 🔊 הקראת טקסט בקול
+🎵 שירים וסרטונים · 🌤️ מזג אוויר · 📰 חדשות
+🎮 טריוויה, סקרים, תזכורות ועוד
+💬 פשוט כותבים חופשי — הוא מבין!
+🌍 מדבר 27 שפות!
+
+👇 *לחצו והתחילו:*
+🎨 תמונות:
+${TG_LINK}?start=tmuna
+
+🎵 שירים:
+${TG_LINK}?start=shir
+
+🔊 הקראה:
+${TG_LINK}?start=daber
 
 🎯 טריוויה:
 ${TG_LINK}?start=trivia
 
-📊 סקרים:
-${TG_LINK}?start=poll
-
-🎮 איקס-עיגול:
-${TG_LINK}?start=xo
-
-💬 או פשוט כתוב שאלה — הבוט מבין עברית!
+💬 או פשוט שאלו כל דבר:
 ${TG_LINK}?start=help`;
 
 /* ---------- טריוויה / איקס-עיגול / תזכורות ---------- */
@@ -1002,7 +1022,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     return sendStartPack(chatId, uid, from);
   }
   // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
-  if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
+  if (['פרסם', 'פרסומת', 'share', 'פרסום', 'advertise'].includes(cmd)) {
     return api.sendMessage({ chat_id: chatId, text: AD_TEXT });
   }
   // 📊 סטטיסטיקות (בעלים בלבד)
