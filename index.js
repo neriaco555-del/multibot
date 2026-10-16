@@ -2239,6 +2239,8 @@ async function handleChatMessage(sock, botJid, msg) {
           return;
         }
         // --- 🔒 פרטי נעול: רק הבעלים. כל השאר → קבוצה + קישור ---
+        // 🛡️ קודם מתעלמים מהודעות ריקות (ריאקשן/סטיקר/מחיקה) — שלא ישלח DM סתם ככה
+        if (!isGroup && !text && !hasImage && !hasAudio) return;
         if (!isGroup) {
           const _dmOwner = msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;
           if (!_dmOwner) {

@@ -336,9 +336,38 @@ const MENU_BUTTONS = {
   '📊 סקר': 'סקר', '📋 תפריט': 'תפריט',
 };
 
-/* ---------- 🔘 כפתורים על כל הודעה: הקראה / רענון / פעולות ---------- */
+/* ---------- 😀 תגובות אימוג'י חכמות (מתי + מה) ---------- */
+const reactAt = new Map(); // chatId -> timestamp
+function pickReaction(text) {
+  const t = String(text || '').trim();
+  if (t.length < 3 || t.length > 200) return '';
+  if (/^[/!]/.test(t)) return ''; // פקודות — לא מגיבים
+  if (/[?؟]\s*$/.test(t)) return ''; // שאלות — לא מגיבים
+  if (/https?:\/\//.test(t)) return ''; // קישורים — לא מגיבים
+  if (/שלום|היי|הי |בוקר טוב|ערב טוב|לילה טוב|מה נשמע|מה קורה|הייוש|אהלן|ברוך הבא/i.test(t)) return '👋';
+  if (/חח|😂|🤣|מצחיק|בדיחה|צחוק|קורע|מצחיקה/i.test(t)) return '😂';
+  if (/תודה|תודות|מעריך|תודה רבה/i.test(t)) return Math.random() < 0.5 ? '❤️' : '🙏';
+  if (/מזל טוב|מזלט|ברכות|בהצלחה|כל הכבוד|אלוף|אלופה/i.test(t)) return '🎉';
+  if (/עצוב|באסה|משתתף|ניחומים|😢|😭|כואב|עצובה/i.test(t)) return '🫂';
+  if (/וואו|מדהים|מטורף|לא יאומן|איזה יופי/i.test(t)) return '😮';
+  if (/אוהב|אוהבת|אהבה|❤|חמוד|מתוק/i.test(t)) return '❤️';
+  if (/בוקר/i.test(t)) return '👋';
+  if (Math.random() < 0.08) return ['👍', '🔥', '❤️', '👏'][Math.floor(Math.random() * 4)]; // חום אקראי נדיר
+  return '';
+}
+function maybeReact(chatId, messageId, text) {
+  try {
+    const now = Date.now();
+    if (now - (reactAt.get(chatId) || 0) < 180000) return; // קירור 3 דקות לצ'אט
+    const em = pickReaction(text);
+    if (!em) return;
+    reactAt.set(chatId, now);
+    api.setMessageReaction({ chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: em }] }).catch(() => {});
+  } catch {}
+}
 const sayCache = new Map(); let saySeq = 1;
 const rfCache = new Map(); let rfSeq = 1;
+const agCache = new Map(); let agSeq = 1;
 const imgCache = new Map(); let imgSeq = 1;
 const songCache = new Map(); let songSeq = 1;
 function trimCache(m) { while (m.size > 300) m.delete(m.keys().next().value); }
@@ -347,9 +376,15 @@ async function sayRich(chatId, text, opts = {}) {
   const kb = new InlineKeyboardBuilder();
   const sid = String(saySeq++); sayCache.set(sid, t); trimCache(sayCache);
   kb.text('🔊 הקראה', `say:${sid}`);
+  kb.text('📋 תפריט', 'menu:main');
+  kb.row();
   if (opts.refresh) {
     const rid = String(rfSeq++); rfCache.set(rid, opts.refresh); trimCache(rfCache);
     kb.text('🔄 עדכן', `rf:${rid}`);
+  }
+  if (opts.again) {
+    const aid = String(agSeq++); agCache.set(aid, opts.again); trimCache(agCache);
+    kb.text('🔁 נסה שוב', `ag:${aid}`);
   }
   for (const [label, data] of (opts.buttons || [])) {
     try { kb.text(label, data); } catch {}
@@ -638,7 +673,8 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
         runAiTool(tool, q),
         new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 30000)),
       ]);
-      return say((out || '').trim().slice(0, 3000) || 'נסה שוב.');
+      const txt = (out || '').trim().slice(0, 3000) || 'נסה שוב.';
+      return say(txt, { again: { tool, q } });
     } catch (e) {
       if (e && e.message === 'EMPTY') return needQ('✍️ הוסף טקסט לכלי הזה.');
       return say('😢 נכשל — נסה שוב.');
@@ -868,7 +904,8 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (q.length < 2) return needQ('💬 מה השאלה?');
     await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => {});
     const { text } = await chatAI(q, []).catch(() => ({ text: '' }));
-    return say((text || '').trim().slice(0, 3000) || 'נסה שוב.');
+    const out = (text || '').trim().slice(0, 3000) || 'נסה שוב.';
+    return say(out, { again: { prompt: q } });
   }
   return null; // לא טופל → צ'אט חופשי
 }
@@ -925,6 +962,7 @@ bot.on('message', async (ctx) => {
     const raw = (msg.text || '').trim();
     if (!raw) return;
     pushHist(chatId, `${from}: ${raw}`);
+    maybeReact(chatId, msg.message_id, raw);
     const isReplyToBot = !!(msg.reply_to_message && botUsername && msg.reply_to_message.from?.username === botUsername);
     const mentioned = botUsername && raw.includes('@' + botUsername);
     let text = raw;
@@ -982,7 +1020,8 @@ bot.on('message', async (ctx) => {
     // צ'אט חופשי
     await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => {});
     const { text: ans } = await chatAI(line.slice(0, 500), []).catch(() => ({ text: '' }));
-    return sendSafe(chatId, (ans || '').trim().slice(0, 3000) || 'שמעתי 🙂 נסה לשאול שוב.');
+    const free = (ans || '').trim().slice(0, 3000) || 'שמעתי 🙂 נסה לשאול שוב.';
+    return say(free, { again: { prompt: line.slice(0, 500) } });
   } catch (e) {
     console.error('tg-msg fail:', (e && e.message || '').slice(0, 150));
   }
@@ -1070,6 +1109,25 @@ bot.on('callback_query', async (ctx) => {
       if (!(cell >= 1 && cell <= 9)) return;
       return doXoMove(chatId, uid, uname, cell);
     }
+    // 🔁 נסה שוב (תשובה חדשה לאותה בקשה)
+    if (data.startsWith('ag:')) {
+      const rec = agCache.get(data.slice(3));
+      if (!rec) return sendSafe(chatId, '⌛ פג — שלח שוב.');
+      await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => {});
+      try {
+        let out = '';
+        if (rec.tool) {
+          out = await runAiTool(rec.tool, rec.q || '');
+        } else {
+          const r = await chatAI(String(rec.prompt || '').slice(0, 500), []);
+          out = (r && r.text) || '';
+        }
+        out = String(out || '').trim().slice(0, 3000) || 'נסה שוב.';
+        return sayRich(chatId, out, { again: rec });
+      } catch { return sendSafe(chatId, '😢 נכשל — נסה שוב.'); }
+    }
+    // 📋 תפריט ראשי
+    if (data === 'menu:main') return sendMenu(chatId);
     if (data.startsWith('menu:')) {
       const key = data.slice(5);
       if (key === 'help') return sendSafe(chatId, HELP);
