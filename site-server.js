@@ -1431,8 +1431,11 @@ function buildGallery() {
     }
   } catch {}
   items.sort((a, b) => (b.at || 0) - (a.at || 0));
+  // איחוד כפילויות: כרטיס תיאור בלי קובץ נזרק אם יש אותו פרומפט עם קובץ
+  const withFile = new Set(items.filter((it) => it.url).map((it) => it.source + '|' + it.type + '|' + it.prompt));
+  const deduped = items.filter((it) => it.url || !withFile.has(it.source + '|' + it.type + '|' + it.prompt));
   // מדלגים על כרטיסים עם קובץ מדיה שלא קיים בדיסק (למשל אחרי פריסה מחדש)
-  const live = items.filter((it) => {
+  const live = deduped.filter((it) => {
     if (typeof it.url === 'string' && it.url.startsWith('/media/')) {
       try {
         const fp = path.join(DIR, 'site', 'media', path.basename(it.url));

@@ -431,7 +431,8 @@ async function sendImagePrompt(chatId, uid, prompt) {
   const withKb = async (buf, caption) => {
     const sent = await api.sendPhoto({ chat_id: chatId, photo: up(buf, 'img.jpg'), caption: String(caption || '').slice(0, 200), reply_markup: kb });
     try {
-      const ph = sent && sent.photo && sent.photo[0];
+      const photos = sent && sent.photo;
+      const ph = photos && photos[photos.length - 1]; // הגדולה ביותר — לאיכות גלריה
       if (ph && ph.file_id) pushGallery(uid, ph.file_id, prompt);
     } catch {}
     try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: String(prompt).slice(0, 300), buffer: buf, ext: 'jpg', source: 'telegram' }); } catch {}

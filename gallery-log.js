@@ -48,7 +48,7 @@ export function readGalleryLog() {
  */
 export function saveCreationCopy(buffer, ext = 'jpg') {
   try {
-    if (!buffer || buffer.length < 3000) return '';
+    if (!buffer || buffer.length < 300) return '';
     const mdir = path.join(DIR, 'site', 'media');
     try { fs.mkdirSync(mdir, { recursive: true }); } catch {}
     // מכסה: לא יותר מ-400MB ולא יותר מ-2000 קבצים
