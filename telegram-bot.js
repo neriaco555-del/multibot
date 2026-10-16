@@ -271,16 +271,17 @@ function setVoice(uid, patch) {
   try { fs.writeFileSync(VOICE_FILE, JSON.stringify(voicePref)); } catch {}
   return next;
 }
-function voicesKeyboard(cur) {
+async function voicesKeyboard(cur, uid) {
+  const [lm, lf, ln] = await Promise.all([t(uid, 'v_male'), t(uid, 'v_female'), t(uid, 'v_none')]);
   const kb = new InlineKeyboardBuilder()
-    .text(`👨 גברי${cur.base === 'male' ? ' ✅' : ''}`, 'voice:male')
-    .text(`👩 נשי${cur.base === 'female' ? ' ✅' : ''}`, 'voice:female').row();
+    .text(`${lm}${cur.base === 'male' ? ' ✅' : ''}`, 'voice:male')
+    .text(`${lf}${cur.base === 'female' ? ' ✅' : ''}`, 'voice:female').row();
   const keys = ['robot', 'alien', 'chipmunk', 'cat', 'demon', 'echo', 'stadium', 'phone', 'slow', 'fast', 'whisper'];
   keys.forEach((k, i) => {
     kb.text(`${VOICE_FX[k].emoji} ${VOICE_FX[k].label}${cur.fx === k ? ' ✅' : ''}`, `voicefx:${k}`);
     if (i % 3 === 2) kb.row();
   });
-  kb.row().text('😐 רגיל (בלי אפקט)', 'voicefx:none');
+  kb.row().text(ln, 'voicefx:none');
   return kb.build();
 }
 // 🫢 אמת/חובה + 🔀 מילים מעורבבות + 📋 תורנות
@@ -411,6 +412,18 @@ const STR = {
   b_dl: { he: '⬇️ הורדות', en: '⬇️ Downloads' },
   b_kolot: { he: '🎙️ קולות', en: '🎙️ Voices' },
   b_help: { he: '❓ עזרה', en: '❓ Help' },
+  sb_say: { he: '🔊 הקראה', en: '🔊 Read aloud' },
+  sb_menu: { he: '📋 תפריט', en: '📋 Menu' },
+  sb_refresh: { he: '🔄 עדכן', en: '🔄 Refresh' },
+  sb_again: { he: '🔁 נסה שוב', en: '🔁 Try again' },
+  dl_song: { he: '⬇️ הורד את השיר', en: '⬇️ Download song' },
+  tr_hint: { he: '💡 רמז', en: '💡 Hint' },
+  tr_skip: { he: '⏭️ דלג', en: '⏭️ Skip' },
+  img_again: { he: '🎲 אפשרות אחרת', en: '🎲 Another version' },
+  img_gal: { he: '🖼️ הגלריה שלי', en: '🖼️ My gallery' },
+  v_male: { he: '👨 גברי', en: '👨 Male' },
+  v_female: { he: '👩 נשי', en: '👩 Female' },
+  v_none: { he: '😐 רגיל (בלי אפקט)', en: '😐 Normal (no effect)' },
   m_tmuna: { he: '🎨 *יצירת תמונות*\nפשוט כתוב תיאור, למשל:\n`חתול אסטרונאוט על הירח`\n(אפשר גם: `/תמונה חתול אסטרונאוט`)', en: '🎨 *Image generation*\nJust write a description, e.g.:\n`an astronaut cat on the moon`\n(you can also use `/image ...`)' },
   m_shir: { he: '🎵 *שירים*\nכתוב שם שיר + זמר.\nדוגמה: `עומר אדם מלכת הדור`\n(אפשר גם `/שיר ...`)', en: '🎵 *Songs*\nWrite song name + artist.\nExample: `Imagine Dragons Believer`\n(you can also use `/song ...`)' },
   m_video: { he: '🎬 *סרטונים*\nכתוב נושא.\nדוגמה: `שערים של מסי`\n(אפשר גם `/וידאו ...`)', en: '🎬 *Videos*\nWrite a topic.\nExample: `funny cats`\n(you can also use `/video ...`)' },
@@ -536,7 +549,7 @@ const MENU_KEYS = ['tmuna', 'shir', 'video', 'daber', 'mazeg', 'news', 'fun', 'g
 async function menuSend(chatId, uid, key) {
   if (key === 'help') return sendSafe(chatId, await t(uid, 'help'));
   if (key === 'kolot') {
-    return api.sendMessage({ chat_id: chatId, text: await t(uid, 'b_kolot'), parse_mode: 'Markdown', reply_markup: voicesKeyboard(getVoice(uid)) }).catch(() => {});
+    return api.sendMessage({ chat_id: chatId, text: await t(uid, 'b_kolot'), parse_mode: 'Markdown', reply_markup: await voicesKeyboard(getVoice(uid), uid) }).catch(() => {});
   }
   if (!MENU_KEYS.includes(key)) return;
   return sendSafe(chatId, await t(uid, 'm_' + key));
@@ -601,29 +614,30 @@ const agCache = new Map(); let agSeq = 1;
 const imgCache = new Map(); let imgSeq = 1;
 const songCache = new Map(); let songSeq = 1;
 function trimCache(m) { while (m.size > 300) m.delete(m.keys().next().value); }
-async function sayRich(chatId, text, opts = {}) {
-  const t = String(text || '').slice(0, 4000) || '…';
+async function sayRich(chatId, text, opts = {}, uid) {
+  const txt = String(text || '').slice(0, 4000) || '…';
   const kb = new InlineKeyboardBuilder();
-  const sid = String(saySeq++); sayCache.set(sid, t); trimCache(sayCache);
-  kb.text('🔊 הקראה', `say:${sid}`);
-  kb.text('📋 תפריט', 'menu:main');
+  const sid = String(saySeq++); sayCache.set(sid, txt); trimCache(sayCache);
+  const [lSay, lMenu] = await Promise.all([t(uid, 'sb_say'), t(uid, 'sb_menu')]);
+  kb.text(lSay, `say:${sid}`);
+  kb.text(lMenu, 'menu:main');
   kb.row();
   if (opts.refresh) {
     const rid = String(rfSeq++); rfCache.set(rid, opts.refresh); trimCache(rfCache);
-    kb.text('🔄 עדכן', `rf:${rid}`);
+    kb.text(await t(uid, 'sb_refresh'), `rf:${rid}`);
   }
   if (opts.again) {
     const aid = String(agSeq++); agCache.set(aid, opts.again); trimCache(agCache);
-    kb.text('🔁 נסה שוב', `ag:${aid}`);
+    kb.text(await t(uid, 'sb_again'), `ag:${aid}`);
   }
   for (const [label, data] of (opts.buttons || [])) {
     try { kb.text(label, data); } catch {}
   }
   const markup = kb.build();
   try {
-    return await api.sendMessage({ chat_id: chatId, text: t, parse_mode: 'Markdown', reply_markup: markup });
+    return await api.sendMessage({ chat_id: chatId, text: txt, parse_mode: 'Markdown', reply_markup: markup });
   } catch {
-    return api.sendMessage({ chat_id: chatId, text: t.replace(/[*_`]/g, ''), reply_markup: markup });
+    return api.sendMessage({ chat_id: chatId, text: txt.replace(/[*_`]/g, ''), reply_markup: markup });
   }
 }
 /* 🖼️ גלריית יצירות אחרונות */
@@ -657,7 +671,7 @@ async function sendImagePrompt(chatId, uid, prompt) {
   await act('upload_photo');
   const iid = String(imgSeq++); imgCache.set(iid, { prompt }); trimCache(imgCache);
   const kb = new InlineKeyboardBuilder()
-    .text('🎲 אפשרות אחרת', `img:${iid}`).text('🖼️ הגלריה שלי', 'gal:').build();
+    .text(await t(uid, 'img_again'), `img:${iid}`).text(await t(uid, 'img_gal'), 'gal:').build();
   const withKb = async (buf, caption) => {
     const sent = await api.sendPhoto({ chat_id: chatId, photo: up(buf, 'img.jpg'), caption: String(caption || '').slice(0, 200), reply_markup: kb });
     try {
@@ -700,26 +714,26 @@ async function sendImagePrompt(chatId, uid, prompt) {
 async function downloadSongFlow(chatId, uid, q) {
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
   await act('upload_document');
-  const prog = await sayRich(chatId, `⬇️ מוריד: "${String(q).slice(0, 80)}"... ⏳`).catch(() => null);
+  const prog = await sayRich(chatId, `⬇️ מוריד: "${String(q).slice(0, 80)}"... ⏳`, {}, uid).catch(() => null);
   try {
     const { downloadYouTubeAudio } = await import('./aimedia.js');
     const res = await searchYouTube(q, 3);
-    if (!res.length) return sayRich(chatId, '😢 לא מצאתי את השיר.');
+    if (!res.length) return sayRich(chatId, '😢 לא מצאתי את השיר.', {}, uid);
     const { buffer, title } = await Promise.race([
       downloadYouTubeAudio(res[0].url, 25),
       new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 360000)),
     ]);
     if (prog?.message_id) api.deleteMessage({ chat_id: chatId, message_id: prog.message_id }).catch(() => {});
-    if (!buffer || buffer.length < 10000) return sayRich(chatId, '😢 ההורדה נכשלה — נסה שיר אחר.');
+    if (!buffer || buffer.length < 10000) return sayRich(chatId, '😢 ההורדה נכשלה — נסה שיר אחר.', {}, uid);
     return api.sendAudio({ chat_id: chatId, audio: up(buffer, 'song.mp3'), title: String(title || '').slice(0, 60), performer: String(res[0].author || '').slice(0, 60) });
-  } catch { return sayRich(chatId, '😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.'); }
+  } catch { return sayRich(chatId, '😢 ההורדה נכשלה (קובץ גדול/חסום). נסה שיר אחר.', {}, uid); }
 }
 
 /* ---------- דיספאצ'ר ---------- */
 async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   const cmd = String(cmdRaw || '').trim();
   const q = String(args || '').trim().slice(0, 500);
-  const say = (t, extra = {}) => sayRich(chatId, t, extra);
+  const say = (tx, extra = {}) => sayRich(chatId, tx, extra, uid);
   const needQ = (usage) => say(usage || '❓ חסר טקסט. כתוב /עזרה.');
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
 
@@ -767,7 +781,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (q.length < 2) return needQ('🎵 שם שיר + זמר.');
     const sid = String(songSeq++); songCache.set(sid, { q }); trimCache(songCache);
     return say(formatMediaResults(rankVideos(await searchYouTube(q, 7), q).slice(0, 3), '🎵'),
-      { buttons: [['⬇️ הורד את השיר', `dls:${sid}`]] });
+      { buttons: [[await t(uid, 'dl_song'), `dls:${sid}`]] });
   }
   if (['וידאו', 'סרטון', 'סרטונים', 'יוטיוב', 'video'].includes(cmd)) {
     if (q.length < 2) return needQ('🎬 נושא לסרטון.');
@@ -819,9 +833,9 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     const cur = getVoice(uid);
     return api.sendMessage({
       chat_id: chatId,
-      text: '🎙️ *בחר קול ואפקט:*\nלחיצה שומרת + משמיעה דוגמה 👇',
+      text: await t(uid, 'b_kolot'),
       parse_mode: 'Markdown',
-      reply_markup: voicesKeyboard(cur),
+      reply_markup: await voicesKeyboard(cur, uid),
     }).catch(() => say('🎙️ כתוב /קולות שוב.'));
   }
   // 🖼️ תמונות
@@ -934,7 +948,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     }, 90000) };
     trivia.set(chatId, rec);
     return say(`🎯 *טריוויה!* (5 נקודות)\n\n❓ ${t.q}\n\n` + t.opts.map((o, i) => `${LET[i]}. ${o}`).join('\n') + '\n\nענו באות או מספר.',
-      { buttons: [['💡 רמז', 'tr:hint'], ['⏭️ דלג', 'tr:skip']] });
+      { buttons: [[await t(uid, 'tr_hint'), 'tr:hint'], [await t(uid, 'tr_skip'), 'tr:skip']] });
   }
   if (['נקודות'].includes(cmd)) return say(`🎖️ *${from}:* ${points[uid] || 0} נקודות`);
   if (['טופ'].includes(cmd)) {
@@ -1354,7 +1368,7 @@ bot.on('callback_query', async (ctx) => {
           out = (r && r.text) || '';
         }
         out = String(out || '').trim().slice(0, 3000) || 'נסה שוב.';
-        return sayRich(chatId, out, { again: rec });
+        return sayRich(chatId, out, { again: rec }, ctx.from?.id);
       } catch { return sendSafe(chatId, '😢 נכשל — נסה שוב.'); }
     }
     // 📋 תפריט ראשי
