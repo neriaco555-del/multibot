@@ -10,7 +10,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { queueServerPush, flushGalleryQueue } from './gallery-log.js';
+import { queueServerPush, flushGalleryQueue, awaitGalleryIdle } from './gallery-log.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const seen = new Set();
@@ -87,6 +87,7 @@ try {
 } catch {}
 
 console.log(`נשלחו לתור: ${queued} תוצרים`);
+await awaitGalleryIdle(); // מחכה שהניסיונות המיידיים יסתיימו לפני שמודדים
 
 // מרוקן את התור עם ניסיונות חוזרים (עד ~10 דקות)
 if (!process.env.GALLERY_SECRET) {

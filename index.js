@@ -4640,9 +4640,9 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
-        // --- זמני שבת וחג ---
+        // --- זמני שבת וחג (לא לחטוף את שבת-מוד) ---
         {
-          const m = text.match(/^(שבת|כניסת-שבת|זמני-שבת)\s*[:\-]?\s*(.+)?$/is);
+          const m = text.match(/^(שבת|כניסת-שבת|זמני-שבת)(?!-מוד|-אוטומטי)\s*[:\-]?\s*(.+)?$/is);
           if (m) {
             const c = (m[2] || '').trim() || 'ירושלים';
             await sendTyping(sock, remoteJid, 800);

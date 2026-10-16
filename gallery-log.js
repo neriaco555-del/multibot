@@ -178,11 +178,25 @@ function ensureGalleryTimer() {
   } catch {}
 }
 
-/** מוסיף יצירה לתור הדחיפה + ניסיון מיידי. */
+let galleryInFlightN = 0;
+export function galleryInFlight() { return galleryInFlightN; }
+/** מחכה שכל הדחיפות שברקע יסתיימו (לסקריפטים חד-פעמיים). */
+export async function awaitGalleryIdle(timeoutMs = 180000) {
+  const t0 = Date.now();
+  while (galleryInFlightN > 0 && Date.now() - t0 < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return galleryInFlightN === 0;
+}
+
+/** מוסיף יצירה לתור הדחיפה + ניסיון מיידי. מחזיר Promise (אפשר לא לחכות). */
 export function queueServerPush({ type, prompt, source, ext, buffer, url, at } = {}) {
   ensureGalleryTimer();
-  if (!serverSecret()) return; // בלי מפתח אין טעם לצבור תור
-  queueServerPushAsync({ type, prompt, source, ext, buffer, url, at }).catch(() => {});
+  if (!serverSecret()) return Promise.resolve(false); // בלי מפתח אין טעם לצבור תור
+  galleryInFlightN++;
+  return queueServerPushAsync({ type, prompt, source, ext, buffer, url, at })
+    .catch(() => {})
+    .finally(() => { galleryInFlightN = Math.max(0, galleryInFlightN - 1); });
 }
 async function queueServerPushAsync({ type, prompt, source, ext, buffer, url, at }) {
   const cleanExt = String(ext || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';

@@ -1435,9 +1435,21 @@ function buildGallery() {
     }
   } catch {}
   items.sort((a, b) => (b.at || 0) - (a.at || 0));
+  // מדלגים על כרטיסים עם קובץ מדיה שלא קיים בדיסק (למשל אחרי פריסה מחדש)
+  const live = items.filter((it) => {
+    if (typeof it.url === 'string' && it.url.startsWith('/media/')) {
+      try {
+        const fp = path.join(DIR, 'site', it.url.replace(/^\/media\//, ''));
+        if (fp.includes('..') || !fs.statSync(fp).isFile()) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  });
   const counts = {};
-  for (const it of items) counts[it.type] = (counts[it.type] || 0) + 1;
-  return { items: items.slice(0, 500), counts, total: items.length };
+  for (const it of live) counts[it.type] = (counts[it.type] || 0) + 1;
+  return { items: live.slice(0, 500), counts, total: live.length };
 }
 
 const server = http.createServer(async (req, res) => {
