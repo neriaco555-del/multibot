@@ -50,6 +50,8 @@ try {
   for (const g of (Array.isArray(d) ? d : [])) {
     const buf = g.url ? localBytes(g.url) : null;
     push({ type: g.type || 'image', prompt: g.prompt || '', source: g.source || 'whatsapp', ext: extOf(g.url || 'x.jpg'), buffer: buf, url: buf ? undefined : g.url, at: g.at });
+    // מסמן גם לפי תיאור כדי שסעיף הטלגרם לא ידחוף כפילות של אותו פרומפט
+    seen.add(`${g.source || 'whatsapp'}|${g.type || 'image'}|${g.prompt || ''}`);
   }
 } catch {}
 // 2) מדיה מהצ'אט

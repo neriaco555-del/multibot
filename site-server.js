@@ -1446,9 +1446,42 @@ function buildGallery() {
     }
     return true;
   });
+  // איחוד תמונות זהות בתוכן (העלאות כפולות של אותו קובץ)
+  const groups = new Map();
+  for (const it of live) {
+    const k = it.source + '|' + it.type + '|' + (it.prompt || '');
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const hashCache = new Map();
+  const fileHash = (url) => {
+    if (hashCache.has(url)) return hashCache.get(url);
+    try {
+      const fp = path.join(DIR, 'site', 'media', path.basename(url));
+      const st = fs.statSync(fp);
+      if (!st.isFile() || st.size > 15 * 1048576) return '';
+      const h = crypto.createHash('md5').update(fs.readFileSync(fp)).digest('hex');
+      hashCache.set(url, h);
+      return h;
+    } catch {
+      return '';
+    }
+  };
+  const final = [];
+  for (const arr of groups.values()) {
+    if (arr.length < 2) { final.push(...arr); continue; }
+    const seenH = new Set();
+    for (const it of arr) {
+      const h = it.url ? fileHash(it.url) : '';
+      if (h && seenH.has(h)) continue;
+      if (h) seenH.add(h);
+      final.push(it);
+    }
+  }
+  final.sort((a, b) => (b.at || 0) - (a.at || 0));
   const counts = {};
-  for (const it of live) counts[it.type] = (counts[it.type] || 0) + 1;
-  return { items: live.slice(0, 500), counts, total: live.length };
+  for (const it of final) counts[it.type] = (counts[it.type] || 0) + 1;
+  return { items: final.slice(0, 500), counts, total: final.length };
 }
 
 const server = http.createServer(async (req, res) => {
