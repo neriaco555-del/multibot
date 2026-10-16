@@ -192,6 +192,120 @@ function fmtTime(iso) {
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `יום ${days[d.getDay()]} ${d.getDate()}.${d.getMonth() + 1} בשעה ${hh}:${mm}`;
 }
+
+/* ---------- טווח שבת ירושלים (Hebcal, עם גיבוי סולארי מקומי) ---------- */
+const JLM = { lat: 31.768, lon: 35.213 };
+const shabbatCache = { at: 0, start: 0, end: 0, src: '' };
+function ilNow() { return new Date(); }
+function ilWeekday(d) {
+  // יום בשבוע לפי Asia/Jerusalem: 5=שישי, 6=שבת
+  try {
+    const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'short' }).format(d);
+    return { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd] ?? d.getDay();
+  } catch { return d.getDay(); }
+}
+function ilOffsetMin(d) {
+  // הפרש דקות Asia/Jerusalem מול UTC
+  try {
+    const f = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Jerusalem', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const p = Object.fromEntries(f.formatToParts(d).map((x) => [x.type, x.value]));
+    const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour % 24), +p.minute, +p.second);
+    return Math.round((asUTC - d.getTime()) / 60000);
+  } catch { return 180; }
+}
+function sunTime(date, isSunset) {
+  // שקיעה/זריחה מקורבת (דיוק ~2 דקות) — ללא תלויות
+  const rad = Math.PI / 180;
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const N = Math.floor((start - new Date(start.getFullYear(), 0, 0)) / 86400000);
+  const lngHour = JLM.lon / 15;
+  const t = N + ((isSunset ? 18 : 6) - lngHour) / 24;
+  const M = 0.9856 * t - 3.289;
+  let L = M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634;
+  L = ((L % 360) + 360) % 360;
+  let RA = Math.atan(0.91764 * Math.tan(L * rad)) / rad;
+  RA = ((RA % 360) + 360) % 360;
+  const Lq = Math.floor(L / 90) * 90, RAq = Math.floor(RA / 90) * 90;
+  RA = RA + (Lq - RAq);
+  RA /= 15;
+  const sinDec = 0.39782 * Math.sin(L * rad);
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosH = (Math.cos(90.833 * rad) - sinDec * Math.sin(JLM.lat * rad)) / (cosDec * Math.cos(JLM.lat * rad));
+  if (cosH < -1 || cosH > 1) return null;
+  let H = Math.acos(cosH) / rad;
+  if (!isSunset) H = 360 - H;
+  H /= 15;
+  const T = H + RA - 0.06571 * t - 6.622;
+  let UT = T - lngHour;
+  UT = ((UT % 24) + 24) % 24;
+  const off = ilOffsetMin(date) / 60;
+  const out = new Date(start);
+  out.setHours(0, 0, 0, 0);
+  out.setMinutes(Math.round((((UT + off) % 24 + 24) % 24) * 60));
+  return out;
+}
+function solarShabbatRange(now) {
+  // מוצא את שישי-שבת הרלוונטיים סביב now
+  const wd = ilWeekday(now);
+  const day = new Date(now);
+  day.setHours(12, 0, 0, 0);
+  const friday = new Date(day);
+  friday.setDate(day.getDate() + ((5 - wd + 7) % 7) - (wd === 6 ? 7 : 0));
+  // אם היום שבת — השישי הרלוונטי הוא אתמול
+  const friSun = sunTime(friday, true);
+  const sat = new Date(friday);
+  sat.setDate(friday.getDate() + 1);
+  const satSun = sunTime(sat, true);
+  if (!friSun || !satSun) return null;
+  return {
+    start: friSun.getTime() - 50 * 60000, // הדלקה 40 דקות לפני שקיעה + 10 דקות חומרה
+    end: satSun.getTime() + 60 * 60000, // הבדלה ~45 דקות אחרי שקיעה + 15 דקות חומרה
+    src: 'solar',
+  };
+}
+/** טווח השבת הקרובה/נוכחית בירושלים: {start, end, src} או null */
+export async function getShabbatRange() {
+  const now = Date.now();
+  if (shabbatCache.start && shabbatCache.end && now - shabbatCache.at < 12 * 3600 * 1000 && now < shabbatCache.end + 3600000) {
+    return shabbatCache;
+  }
+  // 1) Hebcal — מדויק
+  try {
+    const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=281184&m=on', { headers: { 'User-Agent': UA } });
+    if (res.ok) {
+      const j = await res.json();
+      const items = (j.items || []).map((i) => ({ ...i, t: new Date(i.date).getTime() })).filter((i) => i.t).sort((a, b) => a.t - b.t);
+      const candles = items.filter((i) => i.category === 'candles');
+      for (const c of candles) {
+        const h = items.find((i) => i.category === 'havdalah' && i.t > c.t);
+        if (h) {
+          shabbatCache.at = now;
+          shabbatCache.start = c.t;
+          shabbatCache.end = h.t;
+          shabbatCache.src = 'hebcal';
+          if (now < h.t + 3600000) return shabbatCache;
+        }
+      }
+    }
+  } catch {}
+  // 2) גיבוי סולארי
+  try {
+    const r = solarShabbatRange(new Date());
+    if (r) {
+      shabbatCache.at = now;
+      shabbatCache.start = r.start;
+      shabbatCache.end = r.end;
+      shabbatCache.src = r.src;
+      return shabbatCache;
+    }
+  } catch {}
+  return null;
+}
 export async function shabbatTimes(city = 'ירושלים') {
   const clean = (city || '').toString().trim().slice(0, 30) || 'ירושלים';
   const geo = SHABBAT_GEO[clean];

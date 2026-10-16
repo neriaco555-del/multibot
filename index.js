@@ -32,6 +32,7 @@ import {
   animalImage, currencyRates, cryptoPrices, newsHe,
   cityTime, dice, coin, pickOne, genPassword, randNum, randColor, dateHe, countdown, rnd,
   shabbatTimes, stockPrice, shortenUrl, earthquakes, airQuality, resolveIndexSymbol,
+  getShabbatRange,
 } from './more.js';
 import {
   renderXO, xoApply, pickScrambleWord, scrambleWord, isScrambleAnswer,
@@ -434,6 +435,11 @@ const HELP_4 = `🚀 *מדריך מלא (חלק 4: קבוצה מתקדמת)*
  • ${config.BOT_PREFIX}בריף on תל אביב
  • ${config.BOT_PREFIX}בריף — מציג מצב
 
+ ━━━━━━━━━━━━━━
+ 🕯️ *${config.BOT_PREFIX}שבת-מוד on/off — שבת אוטומטית (מנהלים)*
+ בכניסת שבת (ירושלים): הקבוצה ננעלת והבוט שותק לגמרי עד צאתה, ונפתח לבד.
+ • ${config.BOT_PREFIX}שבת-מוד — מצב + זמנים
+
 ━━━━━━━━━━━━━━
  🔔 *${config.BOT_PREFIX}מעקב <ערוץ> — התראה על סרטון חדש*
  • ${config.BOT_PREFIX}מעקב כאן 11 — הוספה לפי שם (גם לא מדויק!)
@@ -573,6 +579,36 @@ const warnedAt = {}; // אנטי-ספאם: מתי הזהרנו כל משתמש
 const proPromoAt = new Map(); // צ'אט פרטי: מתי שלחנו הזמנה למנוי לכל JID (קירור שעה)
 let proTickFails = 0, proTickSkipUntil = 0; // backoff לטיק תפוגות כשהגשר נופל
 let lastGroupScan = 0; // סריקת קבוצות שהבוט חבר בהן (לפאנל) — פעם בשעה
+
+/* ---------- 🕯️ מצב שבת ירושלים — שקט + נעילה אוטומטית ---------- */
+import { AsyncLocalStorage as ALS_SH } from 'node:async_hooks';
+const shabbatALS = new ALS_SH();
+let shabbatRangeCache = null;
+async function shabbatRefresh() {
+  try {
+    const r = await getShabbatRange();
+    if (r && r.start && r.end) shabbatRangeCache = r;
+  } catch {}
+}
+function shabbatActive() {
+  const r = shabbatRangeCache;
+  if (!r) return null;
+  const now = Date.now();
+  return now >= r.start && now <= r.end;
+}
+function shabbatAutoFor(remoteJid) {
+  try { return !!gdata(remoteJid).shabbatAuto; } catch { return false; }
+}
+function isOwnerMsg(msg, remoteJid) {
+  try {
+    if (msg.key.fromMe) return true;
+    return resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;
+  } catch { return false; }
+}
+// שליחה מורשית בזמן שבת (הודעות מעבר בלבד) — עוקפת את השקט הגלובלי
+function shabbatSend(sock, jid, content) {
+  return shabbatALS.run({ allow: true }, () => sock.sendMessage(jid, content));
+}
 let subjQueue = []; // JIDs היסטוריים חסרי שם — משלימים כמה בכל טיק
 const subjDone = new Set();
 const imgInFlight = new Map(); // 🎨 בקשות תמונה שרצות כרגע (מניעת כפילות)
@@ -1285,6 +1321,44 @@ async function schedulerTick() {
       globalThis.__instinctResolved = true;
       resolveInstinct(sock).catch(() => {});
     }
+    // 🕯️ מצב שבת: בדיקת מעברים (כניסה/יציאה) פעם בדקה
+    try {
+      await shabbatRefresh().catch(() => {});
+      const nowAct = shabbatActive();
+      if (nowAct !== null && sock) {
+        let jids = [];
+        try {
+          const s = JSON.parse(fs.readFileSync(new URL('./bot-store.json', import.meta.url), 'utf-8'));
+          jids = Object.keys(s.groups || {}).filter((j) => j.endsWith('@g.us'));
+        } catch {}
+        for (const jid of jids) {
+          let gd = null;
+          try { gd = gdata(jid); } catch { continue; }
+          if (!gd || !gd.shabbatAuto) continue;
+          if (nowAct && gd.shabbatState !== 'on') {
+            gd.shabbatState = 'on';
+            try { saveStore(); } catch {}
+            console.log(`🕯️ שבת נכנסה — נועל ${jid}`);
+            try {
+              await shabbatSend(sock, jid, { text: `🕯️ *שבת שלום!* ✨\n\nהקבוצה נסגרת אוטומטית עד צאת שבת. הבוט נח ולא עונה.\nנתראה במוצאי שבת! 🌟` });
+            } catch {}
+            try { await sock.groupSettingUpdate(jid, 'announcement'); }
+            catch (e) { console.warn('🕯️ נעילה נכשלה (הבוט חייב להיות מנהל):', (e?.message || '').slice(0, 100)); }
+          } else if (!nowAct && gd.shabbatState === 'on') {
+            gd.shabbatState = 'off';
+            try { saveStore(); } catch {}
+            console.log(`🌟 שבת יצאה — פותח ${jid}`);
+            try { await sock.groupSettingUpdate(jid, 'not_announced'); }
+            catch (e) { console.warn('🕯️ פתיחה נכשלה:', (e?.message || '').slice(0, 100)); }
+            try {
+              await shabbatSend(sock, jid, { text: `🌟 *שבוע טוב!* ✨\n\nהקבוצה נפתחה — הבוט חזר לעבוד כרגיל 🤖` });
+            } catch {}
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('shabbat tick fail:', (e?.message || '').slice(0, 100));
+    }
     // 👥 סריקת כל הקבוצות שהבוט חבר בהן (לפאנל — פעם בשעה)
     if (Date.now() - lastGroupScan > 3600000) {
       lastGroupScan = Date.now();
@@ -1582,6 +1656,17 @@ async function start() {
       }
       const toJid = String(args[0] || '');
       const isGrp = toJid.endsWith('@g.us');
+      // 🕯️ שבת: חסימת שליחות לקבוצות במצב-שבת (מתוזמנות/אוטומטיות) — מעברים מורשים בלבד
+      try {
+        if (isGrp && !shabbatALS.getStore()?.allow) {
+          let blocked = false;
+          try { blocked = shabbatActive() === true && !!gdata(toJid).shabbatAuto; } catch {}
+          if (blocked) {
+            console.log(`🕯️ shabbat-silence: skip send -> ${toJid}`);
+            return Promise.resolve({ key: { id: `shabbat-${Date.now()}` } });
+          }
+        }
+      } catch {}
       let skipAd = false;
       if (!isGrp) {
         // בפרטי — מנויים לא רואים פרסומת
@@ -1876,6 +1961,17 @@ async function handleChatMessage(sock, botJid, msg) {
         }
         const remoteJid = msg.key.remoteJid;
         const isGroup = remoteJid.endsWith('@g.us');
+        // 🕯️ שבת: דממה מוחלטת (קבוצה נעולה + שום תגובה) — חוץ מבעלים
+        {
+          const shAct = shabbatActive();
+          if (shAct === null) { shabbatRefresh().catch(() => {}); }
+          else if (shAct) {
+            const auto = isGroup ? shabbatAutoFor(remoteJid) : true;
+            if (auto && !isOwnerMsg(msg, remoteJid)) {
+              return;
+            }
+          }
+        }
         // 🤖 תשובות Instinct (ממסר תמונות): לכידת תמונה לבקשה ממתינה, שאלות טקסט מועברות למבקש
         if (!isGroup && isInstinctJid(remoteJid) && !msg.key.fromMe) {
           instinctSendJid = remoteJid; // זוכרים מאיפה הוא עונה — לשם שולחים
@@ -5494,6 +5590,51 @@ async function handleChatMessage(sock, botJid, msg) {
             } catch {
               await sock.sendMessage(remoteJid, { text: '😢 החיתוך נכשל.' });
             }
+            return;
+          }
+        }
+
+        // --- 🕯️ מצב שבת אוטומטי (ירושלים): נעילה + דממה (מנהלים) ---
+        {
+          const m = text.match(/^(שבת-מוד|שבת-אוטומטי)\s*(on|off|הפעל|כבה)?$/i);
+          if (m) {
+            const fmtSh = (t) => {
+              try {
+                const d = new Date(t);
+                const days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+                return `יום ${days[d.getDay()]} ${d.getDate()}.${d.getMonth() + 1} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+              } catch { return ''; }
+            };
+            const gd = gdata(remoteJid);
+            const arg = (m[2] || '').trim();
+            if (!isGroup) {
+              await shabbatRefresh().catch(() => {});
+              const r = shabbatRangeCache;
+              await sock.sendMessage(remoteJid, { text:
+                `🕯️ *מצב שבת אוטומטי* — פועל בקבוצות שהופעל בהן (מנהלים: ${prefix}שבת-מוד on).` +
+                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכניסה: ${fmtSh(r.start)}\nיציאה: ${fmtSh(r.end)}` : '') });
+              return;
+            }
+            if (!arg) {
+              await shabbatRefresh().catch(() => {});
+              const r = shabbatRangeCache;
+              await sock.sendMessage(remoteJid, { text:
+                `🕯️ מצב שבת אוטומטי כרגע: *${gd.shabbatAuto ? 'פעיל ✅' : 'כבוי'}*${gd.shabbatState === 'on' ? ' (שבת עכשיו!)' : ''}` +
+                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכניסה: ${fmtSh(r.start)}\nיציאה: ${fmtSh(r.end)}` : '') +
+                `\n${prefix}שבת-מוד on / off` });
+              return;
+            }
+            const _sj = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
+            let admin = isOwnerMsg(msg, remoteJid);
+            if (!admin) { try { admin = await isSenderAdmin(sock, remoteJid, _sj); } catch { admin = false; } }
+            if (!admin) { await sock.sendMessage(remoteJid, { text: '⛔ רק מנהלים.' }); return; }
+            const on = /^(on|הפעל)$/i.test(arg);
+            gd.shabbatAuto = on;
+            if (!on) gd.shabbatState = 'off';
+            try { saveStore(); } catch {}
+            await sock.sendMessage(remoteJid, { text: on
+              ? `🕯️ *מצב שבת הופעל ✅*\nבכניסת שבת (ירושלים) הקבוצה תינעל אוטומטית והבוט ישתוק לגמרי עד צאתה.\n(דורש שהבוט מנהל — אחרת רק ישתוק בלי נעילה)`
+              : `🕯️ מצב שבת כובה.` });
             return;
           }
         }
