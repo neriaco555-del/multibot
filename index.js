@@ -3180,14 +3180,20 @@ async function handleChatMessage(sock, botJid, msg) {
             await sock.sendMessage(remoteJid, { text: r?.ok ? `📇 מחובר ל-Me${r.name ? ` כ"${r.name}"` : ''} ✅` : `📇 לא מחובר ל-Me.\nחבר עם: ${prefix}me-התחבר <המספר שלך>` });
             return;
           }
-          // 🔍 !me-זהה <מספרים> — זיהוי עולמי (עד 5)
+          // 🔍 !me-זהה <מספרים> — זיהוי עולמי (עד 5). בקבוצה מורשית רץ על חשבון ה-Me של הבעלים
           {
             const m = text.match(/^(me-זהה|me-זיהוי|me-search)(?:\s+([\s\S]+))?$/is);
             if (m) {
-              if (!svOk4) { await sock.sendMessage(remoteJid, { text: `📇 הפקודה עובדת רק בפרטי או בקבוצת הניהול.` }); return; }
-              const _sessZ = meSessionFor(effJid());
+              const inAllowedGroup = isGroup && isGroupAllowed(remoteJid, true);
+              if (!svOk4 && !inAllowedGroup) { await sock.sendMessage(remoteJid, { text: `📇 הפקודה עובדת בפרטי, בקבוצת הניהול או בקבוצה מורשית.` }); return; }
+              const _sessZ = inAllowedGroup ? meSessionFor(OWNER_DIGITS + '@s.whatsapp.net') : meSessionFor(effJid());
               const st = _sessZ ? await meCall('status', [], 25000, _sessZ) : null;
-              if (!st?.ok) { await sock.sendMessage(remoteJid, { text: `📇 קודם מתחברים: ${prefix}me-התחבר <המספר שלך>` }); return; }
+              if (!st?.ok) {
+                await sock.sendMessage(remoteJid, { text: inAllowedGroup
+                  ? `📇 חשבון ה-Me של הבעלים לא מחובר כרגע.\n(הבעלים מתחבר בפרטי עם: ${prefix}me-התחבר <המספר שלו>)`
+                  : `📇 קודם מתחברים: ${prefix}me-התחבר <המספר שלך>` });
+                return;
+              }
               const raws = (m[2] || '').match(/\+?[\d][\d\s\-()]{6,}/g) || [];
               const nums = [];
               for (const r of raws) {
