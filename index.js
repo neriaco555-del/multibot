@@ -1636,6 +1636,13 @@ async function start() {
         }
       } catch {}
       console.log(`📤 נשלח -> ${args[0]}`);
+      try {
+        // 🔍 דיאגנוסטיקה זמנית: תצוגה מקדימה של תשובות בקבוצה הראשית
+        if (String(args[0] || '') === '120363430145058453@g.us' && args[1] && typeof args[1] === 'object') {
+          const pv = args[1].text || args[1].caption || '';
+          if (pv) console.log(`📤[grp-reply] ${String(pv).slice(0, 150).replace(/\n/g, ' | ')}`);
+        }
+      } catch {}
       return r;
     })
     .catch((e) => { console.error(`❌ שגיאת שליחה -> ${args[0]}: ${e?.message || e}`); throw e; });
