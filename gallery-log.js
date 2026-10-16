@@ -152,7 +152,8 @@ async function postPush(entry) {
 
 /** שליחת תור — מחזיר true אם הכל נשלח. */
 export async function flushGalleryQueue() {
-  const q = readQueue();
+  const q = readQueue().filter((e) => e && e.type === 'image' && e.source === 'whatsapp');
+  writeQueue(q); // מנקה מהתור רשומות שכבר לא מסונכרנות (טלגרם/קול/וידאו/סטיקר)
   if (!q.length) return true;
   if (!serverSecret()) return false; // אין מפתח — לא מנסים בכלל
   const rest = [];
@@ -192,6 +193,8 @@ export async function awaitGalleryIdle(timeoutMs = 180000) {
 /** מוסיף יצירה לתור הדחיפה + ניסיון מיידי. מחזיר Promise (אפשר לא לחכות). */
 export function queueServerPush({ type, prompt, source, ext, buffer, url, at } = {}) {
   ensureGalleryTimer();
+  // לשרת עולות רק תמונות וואטסאפ (השאר נשמר מקומית בלבד)
+  if (type !== 'image' || source !== 'whatsapp') return Promise.resolve(false);
   if (!serverSecret()) return Promise.resolve(false); // בלי מפתח אין טעם לצבור תור
   galleryInFlightN++;
   return queueServerPushAsync({ type, prompt, source, ext, buffer, url, at })

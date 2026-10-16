@@ -1431,9 +1431,11 @@ function buildGallery() {
     }
   } catch {}
   items.sort((a, b) => (b.at || 0) - (a.at || 0));
+  // הגלריה מציגה רק תמונות וואטסאפ (בלי טלגרם/הקלטות/סרטונים/סטיקרים)
+  const onlyWaImages = items.filter((it) => it.type === 'image' && it.source === 'whatsapp');
   // איחוד כפילויות: כרטיס תיאור בלי קובץ נזרק אם יש אותו פרומפט עם קובץ
-  const withFile = new Set(items.filter((it) => it.url).map((it) => it.source + '|' + it.type + '|' + it.prompt));
-  const deduped = items.filter((it) => it.url || !withFile.has(it.source + '|' + it.type + '|' + it.prompt));
+  const withFile = new Set(onlyWaImages.filter((it) => it.url).map((it) => it.source + '|' + it.type + '|' + it.prompt));
+  const deduped = onlyWaImages.filter((it) => it.url || !withFile.has(it.source + '|' + it.type + '|' + it.prompt));
   // מדלגים על כרטיסים עם קובץ מדיה שלא קיים בדיסק (למשל אחרי פריסה מחדש)
   const live = deduped.filter((it) => {
     if (typeof it.url === 'string' && it.url.startsWith('/media/')) {
