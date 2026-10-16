@@ -32,7 +32,7 @@ import {
   animalImage, currencyRates, cryptoPrices, newsHe,
   cityTime, dice, coin, pickOne, genPassword, randNum, randColor, dateHe, countdown, rnd,
   shabbatTimes, stockPrice, shortenUrl, earthquakes, airQuality, resolveIndexSymbol,
-  getShabbatRange,
+  getShabbatRange, getShabbatCitiesTimes, SHABBAT_CITIES,
 } from './more.js';
 import {
   renderXO, xoApply, pickScrambleWord, scrambleWord, isScrambleAnswer,
@@ -57,6 +57,7 @@ import {
   deleteMsg, buildWelcome, invalidateMeta, resolveCanonical, kickParticipant, getGroupMeta,
 } from './admin.js';
 import { transcribeAudio, trimAudio, pitchVoice, downloadYouTubeAudio, downloadYouTubeVideo, describeImage } from './aimedia.js';
+import { decodeQRCodes, aiJudgeText, aiJudgeImage } from './aiguard.js';
 import { generateSiteHTML, updateSiteHTML, publishSite, getSite, newSiteId, extractSiteId, waitForSite, SITE_HELP } from './sites.js';
 import { subsConfigured, SUBS_SETUP_HELP, normPhone, parseDuration, fmtLeft, grantSub, revokeSub, getSub, readSubs, popExpiredSubs, splitPhoneDur, isPro, proPitch, bgList, bgPick, bgSearch, bgExtra, bgSearchExtra, bgResolve, driveImageUrl } from './subs.js';
 import { normalizeNaturalCommand, aiRouteCommand, aiUnderstand, KNOWN_FIRST } from './nlp.js';
@@ -436,9 +437,9 @@ const HELP_4 = `🚀 *מדריך מלא (חלק 4: קבוצה מתקדמת)*
  • ${config.BOT_PREFIX}בריף — מציג מצב
 
  ━━━━━━━━━━━━━━
- 🕯️ *${config.BOT_PREFIX}שבת-מוד on/off — שבת אוטומטית (מנהלים)*
- בכניסת שבת (ירושלים): הקבוצה ננעלת והבוט שותק לגמרי עד צאתה, ונפתח לבד.
- • ${config.BOT_PREFIX}שבת-מוד — מצב + זמנים
+  🕯️ *${config.BOT_PREFIX}שבת-מוד on/off — שבת אוטומטית (מנהלים)*
+ חצי שעה לפני כניסת שבת (ירושלים): הקבוצה ננעלת והבוט שותק לגמרי עד צאתה, ונפתח לבד + שולח תמונת AI של זמני שבת בערים נבחרות.
+  • ${config.BOT_PREFIX}שבת-מוד — מצב + זמנים
 
 ━━━━━━━━━━━━━━
  🔔 *${config.BOT_PREFIX}מעקב <ערוץ> — התראה על סרטון חדש*
@@ -490,8 +491,16 @@ const HELP_5 = `🛡️ *מדריך מנהלים (חלק 5 — רק למנהלי
 ━━━━━━━━━━━━━━
 🔗 *הסרת קישורים אוטומטית*
 • ${config.BOT_PREFIX}קישורים on — כל קישור מלא-מנהל נמחק + אזהרה (3 אזהרות = הרחקה)
+• חוסם גם *תמונות ברקוד* עם קישורים (מפוענח אוטומטית!)
 • ${config.BOT_PREFIX}קישורים off — כיבוי
 • ${config.BOT_PREFIX}קישורים — מציג מצב
+
+━━━━━━━━━━━━━━
+🤖 *שומר-AI (לא מוחק סתם!)*
+• ${config.BOT_PREFIX}שומר on — ה-AI מאשר כל מחיקה, סורק תמונות (עירום/פוגעני),
+  ותופס קללות וספאם שהפילטרים הרגילים מפספסים
+• ${config.BOT_PREFIX}שומר off — כיבוי (חזרה לפילטרים מהירים בלבד)
+• ${config.BOT_PREFIX}שומר — מציג מצב
 
 ━━━━━━━━━━━━━━
 🤬 *סינון קללות* | 🌊 *אנטי-ספאם קשוח*
@@ -608,6 +617,50 @@ function isOwnerMsg(msg, remoteJid) {
 // שליחה מורשית בזמן שבת (הודעות מעבר בלבד) — עוקפת את השקט הגלובלי
 function shabbatSend(sock, jid, content) {
   return shabbatALS.run({ allow: true }, () => sock.sendMessage(jid, content));
+}
+// מונע שליחת תמונת שבת פעמיים לאותה שבת (לפי זמן כניסה)
+const shabbatImgSent = new Map(); // jid -> startKey
+// 🕯️ תמונת זמני שבת אוטומטית: מבקש מה-AI של התמונות ומוסר בקבוצה
+async function sendShabbatImage(sock, jid) {
+  const key = String(shabbatRangeCache?.start || '');
+  if (key && shabbatImgSent.get(jid) === key) return;
+  if (key) shabbatImgSent.set(jid, key);
+  try {
+    // 1) זמני אמת לערים נבחרות (Hebcal) — לכיתוב מדויק + לפרומפט
+    let cities = [];
+    try { cities = await getShabbatCitiesTimes(SHABBAT_CITIES); } catch {}
+    const lines = (cities || [])
+      .filter((c) => c.candles || c.havdalah)
+      .map((c) => `🕯️ ${c.city}: הדלקה ${c.candles || '?'} · הבדלה ${c.havdalah || '?'}`);
+    const parsha = (cities || []).find((c) => c.parsha)?.parsha || '';
+    const timesText = lines.length ? `\n\n${lines.join('\n')}` : '';
+    const parshaText = parsha ? `\n📖 פרשת ${parsha}` : '';
+    // 2) הפרומפט שהמשתמש ביקש — בתוספת הזמנים כדי שהתמונה תהיה רלוונטית
+    const aiPrompt = `תן לי תמונה של זמני שבת בערים נבחרות${lines.length ? ': ' + lines.join(', ') : ''}` +
+      `, עיצוב ברכת שבת שלום חגיגית עם נרות שבת, חלות ופרחים, סגנון חמים ומזמין`;
+    console.log(`🕯️ shabbat image: מבקש מה-AI תמונה ל-${jid}`);
+    try {
+      const { buffer } = await generateImage(aiPrompt);
+      if (buffer && buffer.length > 5000) {
+        await shabbatSend(sock, jid, {
+          image: buffer,
+          caption: `🕯️ *שבת שלום!* ✨${parshaText}${timesText}\n\nהקבוצה נסגרת אוטומטית עד צאת שבת (הבוט נכבה חצי שעה לפני הדלקת נרות). הבוט נח ולא עונה.\nנתראה במוצאי שבת! 🌟`,
+        });
+        try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: aiPrompt.slice(0, 300), buffer, ext: 'jpg', source: 'shabbat-auto' }); } catch {}
+        return;
+      }
+    } catch (e) {
+      console.warn('🕯️ shabbat image AI fail:', (e?.message || '').slice(0, 120));
+    }
+    // גיבוי: אם ה-AI נכשל — לפחות טקסט זמנים
+    if (lines.length) {
+      await shabbatSend(sock, jid, {
+        text: `🕯️ *שבת שלום!* ✨${parshaText}${timesText}\n\n(תמונת ה-AI לא הצליחה להיווצר הפעם 😢)`,
+      });
+    }
+  } catch (e) {
+    console.warn('🕯️ shabbat image flow fail:', (e?.message || '').slice(0, 120));
+  }
 }
 let subjQueue = []; // JIDs היסטוריים חסרי שם — משלימים כמה בכל טיק
 const subjDone = new Set();
@@ -910,7 +963,7 @@ const WORD2FEAT = {
   'תזכורת': 'tools', 'תזכורות': 'tools', 'מחק-תזכורת': 'tools', 'סקר': 'tools', 'סקר-תוצאות': 'tools', 'סקר-סגור': 'tools', 'תורנות': 'tools', 'יומולדת': 'tools', 'אירוע': 'tools', 'אירועים': 'tools', 'בוקר': 'tools', 'בריף': 'tools', 'מעקב': 'tools', 'הסר-מעקב': 'tools', 'סכם-צאט': 'tools', 'יומן': 'tools', 'שערים-יומי': 'tools', 'חתוך': 'tools', 'פעילות': 'tools',
 };
 // פקודות מטא/ניהול — תמיד פעילות (לא חלק מהפיצ'רים)
-const META_ALWAYS = new Set(['עזרה', 'תפריט', 'help', 'menu', 'התחל', 'start', 'מדריך', 'מדריך-מלא', 'guide', 'מצב', 'status', 'id', 'מזהה', 'מנהלים', 'מנהלים-רשימה', 'רשימת-מנהלים', 'אדמין', 'ניהול', 'admin', 'הגדרות', 'הגדרות-ניהול', 'settings', 'מנוע', 'קישורים', 'אנטי-קישורים', 'antilink', 'קישורים-מותרים', 'לינקים-מותרים', 'linkallow', 'קללות', 'אנטי-קללות', 'סינון-קללות', 'מילה-אסורה', 'מחק-מילה', 'מילים-אסורות', 'רשימה-אסורה', 'ספאם-קשוח', 'אנטי-ספאם', 'ברוכים', 'ברוכים-הבאים', 'welcome', 'חוקים', 'rules', 'תייג', 'כולם', 'tagall', 'אזהרה', 'אזהרות', 'נקה-אזהרות', 'נקה-אזהרה', 'שחרר', 'מושתקים', 'קיק', 'kick', 'קדם', 'promote', 'הורד-ניהול', 'הסר-ניהול', 'demote', 'נעל', 'lock', 'פתח', 'unlock', 'שם', 'תיאור', 'תיאור-קבוצה', 'נקה', 'מחק-תשובה', 'מחק', 'מחק-הודעה', 'delete', 'סטטוס-קבוצה', 'השתק', 'השתק-בוט', 'כבה-בוט', 'כבה', 'הדלק-בוט', 'הדלק', 'mute-bot', 'mute', 'פתח-בוט', 'בוט-פתח', 'unmute-bot', 'unmute', 'פרו', 'pro', 'פרו-בטל', 'פרו-ביטול', 'pro-cancel', 'פרו-מצב', 'מצב-פרו', 'פרו-סטטוס', 'סטטוס-פרו', 'pro-status', 'מנויים', 'מנוי-רשימה', 'pro-list', 'הורד', 'הורד-וידאו', 'download-video', 'קבוצות', 'רשימת-קבוצות', 'groups', 'לקבוצה', 'לקבוצת', 'לקבוץ', 'togroup', 'מערכת', 'סטטוס-מערכת', 'system', 'לוג', 'יומן-מערכת', 'log', 'logs', 'גיבוי', 'גבה', 'backup', 'שם-בוט', 'botname', 'קידומת', 'פרפיקס', 'prefix', 'הפעל-מחדש', 'ריסטארט', 'restart', 'הצטרף', 'הצטרפות', 'join', 'אשר', 'אשר-קבוצה', 'approve', 'בטל-אישור', 'בטל-אישור-קבוצה', 'unapprove', 'עזוב', 'עזוב-קבוצה', 'leave', 'זהה', 'זיהוי', 'מי-זה', 'truecaller', 'tc', 'זהה-התחבר', 'זיהוי-התחבר', 'tc-login', 'זהה-קוד', 'זיהוי-קוד', 'tc-code', 'זהה-נתק', 'זיהוי-נתק', 'tc-logout', 'מי-צפה', 'מי-צפו', 'צפו', 'צפיות', 'סטטוס-צפיות', 'מי-ראה', 'status-views', 'נקה-צפיות', 'אפס-צפיות', 'נקה-צפיה', 'אנשי-קשר', 'רשימת-קשר', 'my-contacts', 'מי-שמר-אותי', 'מי-שמר', 'בדיקת-שמירה', 'בדוק-שמירה', 'בדוק-שמר', 'סריקה-עמוקה', 'סריקה-מעמיקה', 'deep-scan', 'אמור', 'אמור-בניסוי', 'כבוט', 'בתור-הבוט', 'as-bot', 'ערוץ-עוקבים', 'ערוץ', 'עוקבים', 'עוקבי-ערוץ', 'channel', 'me-התחבר', 'me-חבר', 'me-login', 'me-קוד', 'me-code', 'me-נתק', 'me-logout', 'me-מצב', 'me-סטטוס', 'me-status', 'me-זהה', 'me-זיהוי', 'me-search']);
+const META_ALWAYS = new Set(['עזרה', 'תפריט', 'help', 'menu', 'התחל', 'start', 'מדריך', 'מדריך-מלא', 'guide', 'מצב', 'status', 'id', 'מזהה', 'מנהלים', 'מנהלים-רשימה', 'רשימת-מנהלים', 'אדמין', 'ניהול', 'admin', 'הגדרות', 'הגדרות-ניהול', 'settings', 'מנוע', 'קישורים', 'אנטי-קישורים', 'antilink', 'קישורים-מותרים', 'לינקים-מותרים', 'linkallow', 'שומר', 'שומר-ai', 'aiguard', 'קללות', 'אנטי-קללות', 'סינון-קללות', 'מילה-אסורה', 'מחק-מילה', 'מילים-אסורות', 'רשימה-אסורה', 'ספאם-קשוח', 'אנטי-ספאם', 'ברוכים', 'ברוכים-הבאים', 'welcome', 'חוקים', 'rules', 'תייג', 'כולם', 'tagall', 'אזהרה', 'אזהרות', 'נקה-אזהרות', 'נקה-אזהרה', 'שחרר', 'מושתקים', 'קיק', 'kick', 'קדם', 'promote', 'הורד-ניהול', 'הסר-ניהול', 'demote', 'נעל', 'lock', 'פתח', 'unlock', 'שם', 'תיאור', 'תיאור-קבוצה', 'נקה', 'מחק-תשובה', 'מחק', 'מחק-הודעה', 'delete', 'סטטוס-קבוצה', 'השתק', 'השתק-בוט', 'כבה-בוט', 'כבה', 'הדלק-בוט', 'הדלק', 'mute-bot', 'mute', 'פתח-בוט', 'בוט-פתח', 'unmute-bot', 'unmute', 'פרו', 'pro', 'פרו-בטל', 'פרו-ביטול', 'pro-cancel', 'פרו-מצב', 'מצב-פרו', 'פרו-סטטוס', 'סטטוס-פרו', 'pro-status', 'מנויים', 'מנוי-רשימה', 'pro-list', 'הורד', 'הורד-וידאו', 'download-video', 'קבוצות', 'רשימת-קבוצות', 'groups', 'לקבוצה', 'לקבוצת', 'לקבוץ', 'togroup', 'מערכת', 'סטטוס-מערכת', 'system', 'לוג', 'יומן-מערכת', 'log', 'logs', 'גיבוי', 'גבה', 'backup', 'שם-בוט', 'botname', 'קידומת', 'פרפיקס', 'prefix', 'הפעל-מחדש', 'ריסטארט', 'restart', 'הצטרף', 'הצטרפות', 'join', 'אשר', 'אשר-קבוצה', 'approve', 'בטל-אישור', 'בטל-אישור-קבוצה', 'unapprove', 'עזוב', 'עזוב-קבוצה', 'leave', 'זהה', 'זיהוי', 'מי-זה', 'truecaller', 'tc', 'זהה-התחבר', 'זיהוי-התחבר', 'tc-login', 'זהה-קוד', 'זיהוי-קוד', 'tc-code', 'זהה-נתק', 'זיהוי-נתק', 'tc-logout', 'מי-צפה', 'מי-צפו', 'צפו', 'צפיות', 'סטטוס-צפיות', 'מי-ראה', 'status-views', 'נקה-צפיות', 'אפס-צפיות', 'נקה-צפיה', 'אנשי-קשר', 'רשימת-קשר', 'my-contacts', 'מי-שמר-אותי', 'מי-שמר', 'בדיקת-שמירה', 'בדוק-שמירה', 'בדוק-שמר', 'סריקה-עמוקה', 'סריקה-מעמיקה', 'deep-scan', 'אמור', 'אמור-בניסוי', 'כבוט', 'בתור-הבוט', 'as-bot', 'ערוץ-עוקבים', 'ערוץ', 'עוקבים', 'עוקבי-ערוץ', 'channel', 'me-התחבר', 'me-חבר', 'me-login', 'me-קוד', 'me-code', 'me-נתק', 'me-logout', 'me-מצב', 'me-סטטוס', 'me-status', 'me-זהה', 'me-זיהוי', 'me-search']);
 const featLabel = (f) => (FEATURES.find((x) => x[0] === f) || [])[1] || f;
 function isFeatureOn(gd, feat) {
   return ((gd && gd.features) || {})[feat] !== false;
@@ -1338,12 +1391,14 @@ async function schedulerTick() {
           if (nowAct && gd.shabbatState !== 'on') {
             gd.shabbatState = 'on';
             try { saveStore(); } catch {}
-            console.log(`🕯️ שבת נכנסה — נועל ${jid}`);
-            try {
-              await shabbatSend(sock, jid, { text: `🕯️ *שבת שלום!* ✨\n\nהקבוצה נסגרת אוטומטית עד צאת שבת. הבוט נח ולא עונה.\nנתראה במוצאי שבת! 🌟` });
-            } catch {}
+            console.log(`🕯️ שבת נכנסה (כיבוי חצי שעה לפני הדלקה) — נועל ${jid}`);
             try { await sock.groupSettingUpdate(jid, 'announcement'); }
             catch (e) { console.warn('🕯️ נעילה נכשלה (הבוט חייב להיות מנהל):', (e?.message || '').slice(0, 100)); }
+            try {
+              await shabbatSend(sock, jid, { text: `🕯️ *שבת שלום!* ✨\n\nהקבוצה נסגרת אוטומטית עד צאת שבת (הבוט נכבה חצי שעה לפני הדלקת נרות). הבוט נח ולא עונה.\n⏳ שולח תמונת זמני שבת... 🌟` });
+            } catch {}
+            // 🎨 מבקש מה-AI של התמונות "תן לי תמונה של זמני שבת בערים נבחרות" ושולח בקבוצה (לא חוסם את הטיק)
+            sendShabbatImage(sock, jid).catch(() => {});
           } else if (!nowAct && gd.shabbatState === 'on') {
             gd.shabbatState = 'off';
             try { saveStore(); } catch {}
@@ -1429,7 +1484,7 @@ async function schedulerTick() {
       try { ops = JSON.parse(fs.readFileSync(opsPath, 'utf-8')); } catch {}
       if (Array.isArray(ops) && ops.length) {
         try { fs.unlinkSync(opsPath); } catch {}
-        const ADMIN_TOGGLES = ['antilink', 'antispam', 'anticurse', 'welcome', 'autoSticker', 'autoTranslate', 'morning', 'rates', 'brief'];
+        const ADMIN_TOGGLES = ['antilink', 'antispam', 'anticurse', 'aiguard', 'welcome', 'autoSticker', 'autoTranslate', 'morning', 'rates', 'brief'];
         for (const op of ops) {
           try {
             if (!op || !op.jid) continue;
@@ -2205,30 +2260,90 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
-        // 🛡️ ניטור מנהלים אוטומטי (חדש — לא נוגע בלוגיקה הקיימת מעלה)
-        // מוחק קישורים/קללות/הצפות/מושתקים לפי הגדרות מנהלים. מנהלים פטורים.
+        // 🛡️ ניטור מנהלים אוטומטי — פילטרים מהירים + שיפוט AI (לא מוחקים סתם!)
+        // מוחק קישורים/קללות/ברקודים/תמונות פוגעניות/הצפות/מושתקים לפי הגדרות מנהלים. מנהלים פטורים.
         {
           const modSender = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
           const gdMod = gdata(remoteJid);
           const needMod = gdMod.toggles.antilink || gdMod.toggles.anticurse ||
-            gdMod.toggles.antispam || (gdMod.muted || []).length > 0;
-          if (needMod && rawText && !msg.key.fromMe) {
+            gdMod.toggles.antispam || gdMod.toggles.aiguard || (gdMod.muted || []).length > 0;
+          if (needMod && (rawText || hasImage) && !msg.key.fromMe) {
             // מושתק — מחיקה שקטה של כל הודעה
             if (isMuted(gdMod, modSender)) {
               await deleteMsg(sock, remoteJid, msg);
               return;
             }
-            const isCmd = rawText.startsWith(prefix);
+            const isCmd = (rawText || '').startsWith(prefix);
             if (!isCmd) {
               let senderIsAdmin = false;
               try {
-                if (gdMod.toggles.antilink || gdMod.toggles.anticurse || gdMod.toggles.antispam) {
+                if (gdMod.toggles.antilink || gdMod.toggles.anticurse || gdMod.toggles.antispam || gdMod.toggles.aiguard) {
                   senderIsAdmin = await isSenderAdmin(sock, remoteJid, modSender);
                 }
               } catch { senderIsAdmin = false; }
               if (!senderIsAdmin) {
+                const aiOn = !!gdMod.toggles.aiguard;
+                // אישור AI לפני מחיקה (כששומר-AI פעיל; כשלא זמין — ההתנהגות הישנה)
+                const aiConfirm = async (stage1kind, text) => {
+                  if (!aiOn) return true;
+                  try {
+                    const v = await aiJudgeText(text, { stage1: stage1kind, allowDomains: gdMod.linkAllow, extraWords: gdMod.curseExtra });
+                    if (!v) return true;
+                    return v.del;
+                  } catch { return true; }
+                };
+                // ענישה אחידה לנתיבים החדשים (מחיקה + אזהרה, 3 = הרחקה)
+                const punish = async (icon, delText) => {
+                  await deleteMsg(sock, remoteJid, msg);
+                  const n = addWarn(gdMod, modSender);
+                  saveStore();
+                  if (n >= 3) {
+                    clearWarns(gdMod, modSender);
+                    saveStore();
+                    const res = await kickParticipant(sock, remoteJid, modSender);
+                    await sock.sendMessage(remoteJid, {
+                      text: res.ok
+                        ? `${icon} ${delText} + @${String(modSender).split('@')[0]} הורחק לאחר 3 אזהרות. 🦵`
+                        : `${icon} ${delText} (אזהרה 3/3) — ההרחקה נכשלה (${await isBotAdmin(sock, remoteJid) ? (res.error || 'שגיאה') : 'הבוט חייב להיות מנהל בקבוצה'}). (@${String(modSender).split('@')[0]})`,
+                      mentions: [modSender],
+                    });
+                  } else {
+                    await sock.sendMessage(remoteJid, {
+                      text: `${icon} ${delText} (אזהרה ${n}/3) (@${String(modSender).split('@')[0]})`,
+                      mentions: [modSender],
+                    });
+                  }
+                };
+                // 0) תמונות: ברקודים עם קישורים (אנטי-קישורים) + תוכן פוגעני (שומר-AI)
+                if (hasImage && (gdMod.toggles.antilink || aiOn)) {
+                  try {
+                    const imgBuf = await downloadMediaRetry(msg, 'mod');
+                    if (imgBuf && imgBuf.length > 500 && imgBuf.length < 12 * 1024 * 1024) {
+                      if (gdMod.toggles.antilink) {
+                        const codes = await decodeQRCodes(imgBuf).catch(() => []);
+                        for (const code of codes) {
+                          if (hasBlockedLink(code, gdMod.linkAllow)) {
+                            if (await aiConfirm('qr', `ברקוד עם קישור: ${code}`)) {
+                              await punish('🔳', 'ברקוד עם קישור חסום נמחק!');
+                              return;
+                            }
+                          }
+                        }
+                      }
+                      if (aiOn) {
+                        try {
+                          const v = await aiJudgeImage(imgBuf);
+                          if (v && v.del) {
+                            await punish('🖼️', `תמונה לא נאותה נמחקה.${v.reason ? ` (${v.reason.slice(0, 80)})` : ''}`);
+                            return;
+                          }
+                        } catch {}
+                      }
+                    }
+                  } catch {}
+                }
                 // 1) קישורים (למעט דומיינים מותרים)
-                if (gdMod.toggles.antilink && hasBlockedLink(rawText, gdMod.linkAllow)) {
+                if (gdMod.toggles.antilink && hasBlockedLink(rawText, gdMod.linkAllow) && await aiConfirm('link', rawText || '')) {
                   await deleteMsg(sock, remoteJid, msg);
                   const n = addWarn(gdMod, modSender);
                   saveStore();
@@ -2251,7 +2366,7 @@ async function handleChatMessage(sock, botJid, msg) {
                   return;
                 }
                 // 2) קללות
-                if (gdMod.toggles.anticurse && hasCurse(rawText, gdMod.curseExtra)) {
+                if (gdMod.toggles.anticurse && hasCurse(rawText, gdMod.curseExtra) && await aiConfirm('curse', rawText || '')) {
                   await deleteMsg(sock, remoteJid, msg);
                   const n = addWarn(gdMod, modSender);
                   saveStore();
@@ -2277,6 +2392,17 @@ async function handleChatMessage(sock, botJid, msg) {
                     mentions: [modSender],
                   });
                   return;
+                }
+                // 4) שומר-AI: סריקה חופשית כשאין ממצא מהפילטרים המהירים
+                if (aiOn && rawText && rawText.trim().length > 1) {
+                  try {
+                    const v = await aiJudgeText(rawText, { stage1: null, allowDomains: gdMod.linkAllow, extraWords: gdMod.curseExtra });
+                    if (v && v.del) {
+                      const icon = v.kind === 'curse' ? '🤬' : v.kind === 'link' ? '🔗' : '🌊';
+                      await punish(icon, `הודעה בעייתית נמחקה.${v.reason ? ` (${v.reason.slice(0, 80)})` : ''}`);
+                      return;
+                    }
+                  } catch {}
                 }
               }
             }
@@ -3901,7 +4027,7 @@ async function handleChatMessage(sock, botJid, msg) {
               const cmd = (parts[0] || '').replace(/^[!\-/]/, '');
               const rest = m[3].trim().slice(parts[0].length).trim();
               const done = async (t) => { await sock.sendMessage(remoteJid, { text: t }); };
-              const tg = { 'קישורים': 'antilink', 'קללות': 'anticurse', 'ספאם-קשוח': 'antispam', 'ספאם': 'antispam', 'ברוכים': 'welcome', 'ברוכים-הבאים': 'welcome' };
+              const tg = { 'קישורים': 'antilink', 'קללות': 'anticurse', 'ספאם-קשוח': 'antispam', 'ספאם': 'antispam', 'שומר': 'aiguard', 'שומר-ai': 'aiguard', 'ברוכים': 'welcome', 'ברוכים-הבאים': 'welcome' };
               if (cmd === 'הגדרות') { await done(settingsText(tjid)); return; }
               if (tg[cmd] !== undefined) {
                 if (!rest) { await done(`${tg[cmd]}: ${gd.toggles[tg[cmd]] ? 'פעיל ✅' : 'כבוי'} (${prefix}לקבוצה ... ${cmd} on/off)`); return; }
@@ -5484,6 +5610,7 @@ async function handleChatMessage(sock, botJid, msg) {
               const created = meta?.creation ? new Date(meta.creation * 1000).toLocaleDateString('he-IL') : '—';
               const active = [
                 gd.toggles.antilink && 'אנטי-לינק', gd.toggles.anticurse && 'אנטי-קללות',
+                gd.toggles.aiguard && 'שומר-AI',
                 gd.toggles.antispam && 'אנטי-ספאם', gd.toggles.welcome && 'ברוכים-הבאים',
                 gd.toggles.morning && 'בוקר-טוב', gd.toggles.rates && 'שערים', gd.toggles.brief && 'בריף',
                 (gd.botMutedUntil > Date.now()) && 'בוט-מושתק', gd.xo && 'משחק-XO', gd.scramble && 'סבב-מילים',
@@ -5611,8 +5738,8 @@ async function handleChatMessage(sock, botJid, msg) {
               await shabbatRefresh().catch(() => {});
               const r = shabbatRangeCache;
               await sock.sendMessage(remoteJid, { text:
-                `🕯️ *מצב שבת אוטומטי* — פועל בקבוצות שהופעל בהן (מנהלים: ${prefix}שבת-מוד on).` +
-                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכניסה: ${fmtSh(r.start)}\nיציאה: ${fmtSh(r.end)}` : '') });
+                `🕯️ *מצב שבת אוטומטי* — פועל בקבוצות שהופעל בהן (מנהלים: ${prefix}שבת-מוד on).\nהבוט נכבה חצי שעה לפני הדלקת נרות ושולח תמונת AI של זמני שבת.` +
+                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכיבוי בוט: ${fmtSh(r.offAt || r.start)}\nהדלקת נרות: ${fmtSh(r.candlesAt || r.start)}\nיציאה: ${fmtSh(r.end)}` : '') });
               return;
             }
             if (!arg) {
@@ -5620,7 +5747,7 @@ async function handleChatMessage(sock, botJid, msg) {
               const r = shabbatRangeCache;
               await sock.sendMessage(remoteJid, { text:
                 `🕯️ מצב שבת אוטומטי כרגע: *${gd.shabbatAuto ? 'פעיל ✅' : 'כבוי'}*${gd.shabbatState === 'on' ? ' (שבת עכשיו!)' : ''}` +
-                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכניסה: ${fmtSh(r.start)}\nיציאה: ${fmtSh(r.end)}` : '') +
+                (r ? `\n\n🕯️ שבת קרובה (ירושלים):\nכיבוי בוט: ${fmtSh(r.offAt || r.start)}\nהדלקת נרות: ${fmtSh(r.candlesAt || r.start)}\nיציאה: ${fmtSh(r.end)}` : '') +
                 `\n${prefix}שבת-מוד on / off` });
               return;
             }
@@ -5633,7 +5760,7 @@ async function handleChatMessage(sock, botJid, msg) {
             if (!on) gd.shabbatState = 'off';
             try { saveStore(); } catch {}
             await sock.sendMessage(remoteJid, { text: on
-              ? `🕯️ *מצב שבת הופעל ✅*\nבכניסת שבת (ירושלים) הקבוצה תינעל אוטומטית והבוט ישתוק לגמרי עד צאתה.\n(דורש שהבוט מנהל — אחרת רק ישתוק בלי נעילה)`
+              ? `🕯️ *מצב שבת הופעל ✅*\nחצי שעה לפני כניסת שבת (ירושלים) הקבוצה תינעל אוטומטית והבוט ישתוק לגמרי עד צאתה + תישלח תמונת AI של זמני שבת בערים נבחרות.\n(דורש שהבוט מנהל — אחרת רק ישתוק בלי נעילה)`
               : `🕯️ מצב שבת כובה.` });
             return;
           }
@@ -6042,6 +6169,7 @@ const DOWNLOAD_DISABLED =
                 `🛡️ *הגדרות ניהול:*\n\n` +
                 `🔗 קישורים: *${on(gd.toggles.antilink)}*\n` +
                 `🤬 סינון קללות: *${on(gd.toggles.anticurse)}*\n` +
+                `🤖 שומר-AI: *${on(gd.toggles.aiguard)}*\n` +
                 `🌊 ספאם-קשוח: *${on(gd.toggles.antispam)}*\n` +
                 `👋 ברוכים: *${on(gd.toggles.welcome)}*\n` +
                 `📜 חוקים: ${gd.rules ? 'מוגדר ✅' : 'לא מוגדר'}\n` +
@@ -6059,7 +6187,7 @@ const DOWNLOAD_DISABLED =
               const arg = (m[2] || '').trim();
               const gd = gdata(remoteJid);
               if (!arg) {
-                await sock.sendMessage(remoteJid, { text: `🔗 הסרת קישורים: *${gd.toggles.antilink ? 'פעילה ✅' : 'כבויה'}*\n${prefix}קישורים on / off\n(מנהלים בלבד לשינוי — 3 אזהרות = הרחקה)` });
+                await sock.sendMessage(remoteJid, { text: `🔗 הסרת קישורים: *${gd.toggles.antilink ? 'פעילה ✅' : 'כבויה'}*\nכולל תמונות ברקוד עם קישורים.\n${prefix}קישורים on / off\n(מנהלים בלבד לשינוי — 3 אזהרות = הרחקה)` });
                 return;
               }
               if (!(await needAdmin())) return;
@@ -6070,7 +6198,30 @@ const DOWNLOAD_DISABLED =
               }
               gd.toggles.antilink = v;
               saveStore();
-              await sock.sendMessage(remoteJid, { text: `🔗 הסרת קישורים ${v ? 'הופעלה ✅ (קישור = מחיקה + אזהרה)' : 'כובה'}` });
+              await sock.sendMessage(remoteJid, { text: `🔗 הסרת קישורים ${v ? 'הופעלה ✅ (כולל ברקודים! קישור = מחיקה + אזהרה)' : 'כובה'}` });
+              return;
+            }
+          }
+
+          // 🤖 שומר-AI on/off — שיפוט חכם: מאשר מחיקות, סורק תמונות, לא מוחק סתם
+          {
+            const m = text.match(/^(שומר|שומר-ai|aiguard)\s*[:\-]?\s*(.*)$/is);
+            if (m) {
+              const arg = (m[2] || '').trim();
+              const gd = gdata(remoteJid);
+              if (!arg) {
+                await sock.sendMessage(remoteJid, { text: `🤖 שומר-AI: *${gd.toggles.aiguard ? 'פעיל ✅' : 'כבוי'}*\nכשהוא פעיל: ה-AI מאשר כל מחיקה (אין טעויות), סורק תמונות (עירום/פוגעני), ותופס קללות/ספאם שהפילטרים פספסו.\n${prefix}שומר on / off\n(מנהלים בלבד לשינוי)` });
+                return;
+              }
+              if (!(await needAdmin())) return;
+              const v = parseOnOff(arg);
+              if (v === null) {
+                await sock.sendMessage(remoteJid, { text: `😢 כתוב: ${prefix}שומר on / off` });
+                return;
+              }
+              gd.toggles.aiguard = v;
+              saveStore();
+              await sock.sendMessage(remoteJid, { text: `🤖 שומר-AI ${v ? 'הופעל ✅ (מחיקות חכמות בלבד!)' : 'כובה'}` });
               return;
             }
           }
