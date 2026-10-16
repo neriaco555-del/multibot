@@ -148,7 +148,13 @@ export async function publishSite(id, html, message) {
     /* קובץ חדש — בלי sha */
   }
   await ghApi('PUT', `repos/${owner}/${repo}/contents/${contentPath}`, body);
-  return { url: siteUrl(owner, id), id, owner, repo };
+  const url = siteUrl(owner, id);
+  // 🖼️ רישום אוטומטי לגלריה (לא מפיל את הפרסום אם נכשל)
+  try {
+    const { logCreation } = await import('./gallery-log.js');
+    logCreation({ type: 'site', prompt: String(message || id).slice(0, 300), url, source: 'whatsapp' });
+  } catch {}
+  return { url, id, owner, repo };
 }
 
 /** מחכה שהכתובת תחזיר 200 (גיטהאב Pages מתעדכן באיחור) — עד timeoutMs. מחזיר true אם חי. */

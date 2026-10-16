@@ -323,6 +323,20 @@ function rr2push(rid, item) {
   if (rr.hist.length > MAX_HIST) rr.hist = rr.hist.slice(-MAX_HIST);
   saveHist();
   roomCast(rid, { t: 'msg', ...item, room: rid });
+  // 🖼️ כל מדיה של הבוט נרשמת אוטומטית לגלריה
+  try {
+    const mu = item?.media?.url;
+    if (item?.from === BOT_NAME && typeof mu === 'string' && mu.startsWith('/media/')) {
+      const kind = item.media.kind;
+      const t = String(item.text || '');
+      const type = /סטיקר|מדבקה/i.test(t) ? 'sticker'
+        : kind === 'audio' ? 'voice' : kind === 'video' ? 'video'
+        : /QR|ברקוד/i.test(t) ? 'qr' : 'image';
+      import('./gallery-log.js').then((m) => {
+        try { m.logCreation({ type, prompt: t.slice(0, 300), url: mu, source: 'site' }); } catch {}
+      }).catch(() => {});
+    }
+  } catch {}
 }
 async function pumpBot() {
   if (pumpBot.run) return;
@@ -1333,7 +1347,91 @@ function handleFrame(ws, state, text) {
 }
 
 // ---------- HTTP ----------
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.json': 'application/json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.webm': 'video/webm', '.mp4': 'video/mp4', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8' };
+
+/* 🖼️ גלריית תוצרים — איחוד כל המקורות לרשימה אחת */
+function buildGallery() {
+  const items = [];
+  const seen = new Set();
+  const push = (it) => {
+    const key = it.url || (it.source + '|' + it.type + '|' + it.prompt + '|' + it.at);
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(it);
+  };
+  const kindOf = (url, hint) => {
+    if (/site|http/i.test(hint || '') || /^https?:/i.test(url || '')) return 'link';
+    const e = String(url || '').split('.').pop().toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(e)) return 'image';
+    if (['mp4', 'webm'].includes(e)) return 'video';
+    if (['mp3', 'wav', 'ogg', 'm4a'].includes(e)) return 'audio';
+    if (hint === 'image' || hint === 'video' || hint === 'audio') return hint;
+    return 'image';
+  };
+  const typeOfMedia = (text, kind, from) => {
+    const t = String(text || '');
+    if (/סטיקר|מדבקה|sticker/i.test(t)) return 'sticker';
+    if (kind === 'audio') return 'voice';
+    if (kind === 'video') return 'video';
+    if (/QR|ברקוד/i.test(t)) return 'qr';
+    return 'image';
+  };
+  // 1) לוג מרכזי (bot-gallery.json) — כולל אתרים עתידיים
+  try {
+    const d = JSON.parse(fs.readFileSync(new URL('./bot-gallery.json', import.meta.url), 'utf-8'));
+    for (const g of (Array.isArray(d) ? d : [])) {
+      const type = String(g.type || 'other');
+      const kind = type === 'site' ? 'link'
+        : ['image', 'sticker', 'qr'].includes(type) ? 'image'
+        : type === 'video' ? 'video' : type === 'music' || type === 'voice' ? 'audio' : kindOf(g.url);
+      push({ id: g.id || ('g' + g.at), type, kind, prompt: g.prompt || '', url: g.url || '', at: g.at || 0, source: g.source || 'site' });
+    }
+  } catch {}
+  // 2) הודעות מדיה מהצ'אט (site-chat.json בזיכרון)
+  try {
+    for (const r of rooms.values()) {
+      for (const h of (r.hist || [])) {
+        const mu = h?.media?.url;
+        if (typeof mu !== 'string' || !mu.startsWith('/media/')) continue;
+        const kind = h.media.kind === 'image' || h.media.kind === 'video' || h.media.kind === 'audio' ? h.media.kind : kindOf(mu);
+        push({
+          id: 'c' + h.id, type: typeOfMedia(h.text, kind, h.from),
+          kind, prompt: String(h.text || '').slice(0, 300),
+          url: mu, at: h.at || 0, source: 'site',
+        });
+      }
+    }
+  } catch {}
+  // 3) קבצי site/media יתומים (לא מקושרים להודעה)
+  try {
+    const mdir = path.join(DIR, 'site', 'media');
+    for (const f of fs.readdirSync(mdir)) {
+      const url = '/media/' + f;
+      if (seen.has(url)) continue;
+      const st = fs.statSync(path.join(mdir, f));
+      if (!st.isFile() || st.size < 10) continue;
+      const kind = kindOf(url);
+      if (kind === 'image' && st.size < 3000) continue; // קבצי בדיקה זעירים
+      push({
+        id: 'f' + f, type: kind === 'audio' ? 'voice' : kind === 'video' ? 'video' : 'image',
+        kind, prompt: '', url, at: Math.floor(st.mtimeMs), source: 'site',
+      });
+    }
+  } catch {}
+  // 4) גלריית טלגרם (fid — מוצג ככרטיס תיאור, התמונה באפליקציית טלגרם)
+  try {
+    const tg = JSON.parse(fs.readFileSync(new URL('./tg-gallery.json', import.meta.url), 'utf-8'));
+    for (const arr of Object.values(tg || {})) {
+      for (const g of (Array.isArray(arr) ? arr : [])) {
+        push({ id: 'tg' + (g.at || Math.random()), type: 'image', kind: 'text', prompt: g.prompt || '', url: '', at: g.at || 0, source: 'telegram' });
+      }
+    }
+  } catch {}
+  items.sort((a, b) => (b.at || 0) - (a.at || 0));
+  const counts = {};
+  for (const it of items) counts[it.type] = (counts[it.type] || 0) + 1;
+  return { items: items.slice(0, 500), counts, total: items.length };
+}
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1386,6 +1484,15 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/stats') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ online: clients.size, rooms: roomsList() }));
+      return;
+    }
+    if (u.pathname === '/api/gallery') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      try {
+        res.end(JSON.stringify(buildGallery()));
+      } catch {
+        res.end(JSON.stringify({ items: [], counts: {}, total: 0 }));
+      }
       return;
     }
     if (u.pathname === '/api/tts' && req.method === 'GET') {

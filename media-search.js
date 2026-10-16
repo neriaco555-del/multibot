@@ -23,17 +23,26 @@ async function searchOfficial(query, max = 3) {
 
 async function searchFree(query, max = 3) {
   const { default: yts } = await import('yt-search');
-  const r = await yts(query.slice(0, 100));
-  return (r.videos || []).slice(0, max).map((v) => ({
-    title: v.title,
-    url: v.url,
-    thumbnail: v.thumbnail || null,
-    author: v.author?.name || '',
-    duration: v.timestamp || '',
-    seconds: Number(v.duration?.seconds) || 0,
-    views: Number(v.views) || 0,
-    live: !!v.live,
-  }));
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await yts(query.slice(0, 100));
+      return (r.videos || []).slice(0, max).map((v) => ({
+        title: v.title,
+        url: v.url,
+        thumbnail: v.thumbnail || null,
+        author: v.author?.name || '',
+        duration: v.timestamp || '',
+        seconds: Number(v.duration?.seconds) || 0,
+        views: Number(v.views) || 0,
+        live: !!v.live,
+      }));
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 2500)); // יוטיוב חוסם פרצים — ניסיון חוזר
+    }
+  }
+  throw lastErr || new Error('yt-search failed');
 }
 
 /* ---------- דירוג רלוונטיות: התאמת כותרת + צפיות + אורך סביר ---------- */

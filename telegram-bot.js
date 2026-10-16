@@ -434,6 +434,7 @@ async function sendImagePrompt(chatId, uid, prompt) {
       const ph = sent && sent.photo && sent.photo[0];
       if (ph && ph.file_id) pushGallery(uid, ph.file_id, prompt);
     } catch {}
+    try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: String(prompt).slice(0, 300), buffer: buf, ext: 'jpg', source: 'telegram' }); } catch {}
     return sent;
   };
   const rsec = (process.env.RELAY_SECRET || '').trim();
@@ -522,6 +523,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
         new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 120000)),
       ]);
       if (buffer && buffer.length > 3000) {
+        try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'sticker', prompt: String(q).slice(0, 300), buffer, ext: 'png', source: 'telegram' }); } catch {}
         const webp = await toStickerBuffer(buffer).catch(() => null);
         if (webp) return api.sendSticker({ chat_id: chatId, sticker: up(webp, 's.webp') });
         return api.sendPhoto({ chat_id: chatId, photo: up(buffer, 's.png'), caption: '⭐ הסטיקר שלך:' });

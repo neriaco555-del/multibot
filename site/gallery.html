@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#00a884">
+<meta name="description" content="גלריית התוצרים של מולטי בוט — תמונות, סטיקרים, אתרים, מוזיקה, וידאו ועוד">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖼️</text></svg>">
+<title>גלריית התוצרים 🖼️ · מולטי בוט</title>
+<style>
+:root{
+  --green:#00a884; --green-d:#008069;
+  --bg:#0b141a; --panel:#111b21; --card:#1f2c34; --hover:#2a3942;
+  --txt:#e9edef; --muted:#8696a0; --divider:#222d34;
+  --radius:14px;
+}
+body.light{
+  --bg:#eae6df; --panel:#ffffff; --card:#ffffff; --hover:#f0f2f5;
+  --txt:#111b21; --muted:#667781; --divider:#e9edef;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',"Segoe UI",system-ui,Arial,sans-serif;background:var(--bg);color:var(--txt);min-height:100dvh}
+/* ===== כותרת ===== */
+header.top{position:sticky;top:0;z-index:10;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.35);padding:12px 16px}
+.top-in{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.logo{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--green),var(--green-d));display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.tt{flex-grow:1;min-width:150px}
+.tt b{font-size:19px;display:block}
+.tt span{font-size:12.5px;color:var(--muted)}
+.btn{border:0;border-radius:24px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;background:var(--hover);color:var(--txt);text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--green);color:#fff}
+.btn:active{transform:scale(.97)}
+/* ===== סטטיסטיקות ===== */
+.stats{max-width:1100px;margin:14px auto 0;padding:0 16px;display:flex;gap:10px;overflow-x:auto}
+.stat{background:var(--panel);border-radius:var(--radius);padding:12px 16px;min-width:110px;text-align:center;flex-shrink:0}
+.stat b{font-size:22px;display:block;color:var(--green)}
+.stat small{font-size:12px;color:var(--muted)}
+/* ===== סינון + חיפוש ===== */
+.toolbar{max-width:1100px;margin:12px auto 0;padding:0 16px;display:flex;flex-direction:column;gap:10px}
+.search{display:flex;gap:8px}
+.search input{flex-grow:1;padding:11px 18px;border-radius:24px;border:0;background:var(--panel);color:var(--txt);font-size:15px;font-family:inherit;outline:none;min-width:0}
+.search input:focus{outline:2px solid var(--green)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.chip{border:0;border-radius:20px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;background:var(--panel);color:var(--txt);white-space:nowrap;flex-shrink:0}
+.chip.on{background:var(--green);color:#fff}
+.chip .n{opacity:.75;font-size:12px}
+/* ===== גריד ===== */
+#grid{max-width:1100px;margin:14px auto 60px;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.card{background:var(--card);border-radius:var(--radius);overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform .15s;position:relative}
+.card:hover{transform:translateY(-2px)}
+.card img.prev{width:100%;height:220px;object-fit:cover;display:block;cursor:zoom-in;background:#000}
+.card video.prev{width:100%;max-height:220px;display:block;background:#000}
+.card audio{width:100%;margin:10px 0 2px}
+.card .body{padding:12px 14px}
+.badge{display:inline-block;font-size:11.5px;font-weight:700;border-radius:12px;padding:3px 10px;margin-bottom:7px;background:rgba(0,168,132,.15);color:var(--green)}
+body.light .badge{background:#e7f8f2}
+.badge.site{background:rgba(254,153,1,.15);color:#fe9901}
+.badge.tg{background:rgba(83,189,235,.15);color:#53bdeb}
+.prompt{font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.meta{font-size:11.5px;color:var(--muted);margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.actions{display:flex;gap:8px;margin-top:10px}
+.actions a,.actions button{flex:1;text-align:center;border:0;border-radius:20px;padding:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;background:var(--hover);color:var(--txt)}
+.actions a.open{background:var(--green);color:#fff}
+.sitethumb{height:120px;display:flex;align-items:center;justify-content:center;font-size:52px;background:linear-gradient(135deg,rgba(0,168,132,.25),rgba(0,92,75,.25))}
+/* ===== מצבים ===== */
+#empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:15px;grid-column:1/-1}
+#loading{text-align:center;color:var(--muted);padding:40px;font-size:15px;grid-column:1/-1}
+.spin{display:inline-block;animation:sp 1s linear infinite;font-size:28px}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* ===== לייטבוקס ===== */
+#light{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.9);padding:16px;flex-direction:column}
+#light.open{display:flex}
+#light img{max-width:94vw;max-height:80vh;border-radius:12px}
+#light .cap{color:#fff;font-size:14px;margin-top:10px;max-width:90vw;text-align:center}
+#light .x{position:absolute;top:14px;left:16px;color:#fff;font-size:30px;cursor:pointer;background:none;border:0}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
+@media (max-width:480px){
+  #grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  .card img.prev{height:160px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="logo">🖼️</div>
+    <div class="tt"><b>גלריית התוצרים</b><span>כל מה שהבוט יצר — מתעדכן אוטומטית ✨</span></div>
+    <button class="btn" id="themeBtn" title="מצב בהיר/כהה">🌙</button>
+    <button class="btn" id="refreshBtn" title="רענון">🔄</button>
+    <a class="btn primary" href="/">💬 לצ'אט</a>
+  </div>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<div class="toolbar">
+  <div class="search"><input id="q" placeholder="🔍 חיפוש לפי תיאור..."></div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<div id="grid"><div id="loading"><span class="spin">⏳</span><br>טוען תוצרים...</div></div>
+
+<div id="light">
+  <button class="x" id="lightX">✕</button>
+  <img id="lightImg" alt="">
+  <div class="cap" id="lightCap"></div>
+</div>
+
+<footer>מולטי בוט 🌐 · הגלריה מתעדכנת אוטומטית מכל יצירה חדשה</footer>
+
+<script>
+const TYPE_HE = {
+  image:'🎨 תמונה', sticker:'⭐ סטיקר', site:'🌐 אתר',
+  music:'🎼 מוזיקה', video:'🎬 וידאו', voice:'🔊 קול',
+  qr:'🔳 ברקוד', other:'📦 אחר'
+};
+const FILTERS = [
+  ['all','✨ הכל'], ['image','🎨 תמונות'], ['sticker','⭐ סטיקרים'],
+  ['site','🌐 אתרים'], ['music','🎼 מוזיקה'], ['video','🎬 וידאו'],
+  ['voice','🔊 קול'], ['qr','🔳 ברקוד']
+];
+let items = [];
+let filter = 'all';
+let query = '';
+
+const grid = document.getElementById('grid');
+const chipsEl = document.getElementById('chips');
+const statsEl = document.getElementById('stats');
+
+function esc(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function timeHe(at){
+  try { return new Date(at).toLocaleString('he-IL',{day:'numeric',month:'numeric',hour:'2-digit',minute:'2-digit'}); }
+  catch { return ''; }
+}
+function srcHe(s){
+  return s==='whatsapp' ? '💬 וואטסאפ' : s==='telegram' ? '✈️ טלגרם' : '🌐 אתר';
+}
+
+function renderChips(counts){
+  chipsEl.innerHTML = '';
+  for (const [key,label] of FILTERS){
+    const n = key==='all' ? items.length : (counts[key]||0);
+    if (key!=='all' && !n) continue;
+    const b = document.createElement('button');
+    b.className = 'chip' + (filter===key ? ' on' : '');
+    b.innerHTML = esc(label) + ' <span class="n">' + n + '</span>';
+    b.onclick = () => { filter = key; renderChips(counts); render(); };
+    chipsEl.appendChild(b);
+  }
+}
+
+function renderStats(counts){
+  const defs = [['image','🎨'],['sticker','⭐'],['site','🌐'],['music','🎼'],['video','🎬'],['voice','🔊']];
+  statsEl.innerHTML =
+    '<div class="stat"><b>'+items.length+'</b><small>✨ תוצרים</small></div>' +
+    defs.filter(([k])=>counts[k]).map(([k,ic])=>
+      '<div class="stat"><b>'+counts[k]+'</b><small>'+ic+' '+(TYPE_HE[k]||k).replace(/^... /,'')+'</small></div>'
+    ).join('');
+}
+
+function cardHTML(it){
+  const badge = it.source==='telegram'
+    ? '<span class="badge tg">✈️ טלגרם · '+(TYPE_HE[it.type]||'📦')+'</span>'
+    : it.type==='site'
+      ? '<span class="badge site">🌐 אתר</span>'
+      : '<span class="badge">'+(TYPE_HE[it.type]||'📦')+'</span>';
+  let media = '';
+  if (it.type==='site'){
+    media = '<div class="sitethumb">🌐</div>';
+  } else if (it.kind==='image' && it.url){
+    media = '<img class="prev" loading="lazy" src="'+esc(it.url)+'" alt="'+esc(it.prompt||'יצירה')+'" data-full="'+esc(it.url)+'" data-cap="'+esc(it.prompt||'')+'">';
+  } else if (it.kind==='video' && it.url){
+    media = '<video class="prev" controls preload="metadata" src="'+esc(it.url)+'"></video>';
+  } else if (it.kind==='audio' && it.url){
+    media = '<div style="padding:14px 14px 0;font-size:44px;text-align:center">🎵</div><div style="padding:0 12px"><audio controls preload="none" src="'+esc(it.url)+'"></audio></div>';
+  } else if (it.url){
+    media = '<div class="sitethumb">📄</div>';
+  } else {
+    media = '<div class="sitethumb">'+(it.type==='sticker'?'⭐':it.type==='music'?'🎼':it.type==='voice'?'🔊':'🎨')+'</div>';
+  }
+  const openBtn = it.url
+    ? (it.type==='site'
+        ? '<a class="open" href="'+esc(it.url)+'" target="_blank" rel="noopener">🔗 פתיחה</a>'
+        : '<a class="open" href="'+esc(it.url)+'" target="_blank" rel="noopener">👁️ צפייה</a>')
+    : '';
+  const dlBtn = (it.url && it.type!=='site') ? '<a href="'+esc(it.url)+'" download>⬇️</a>' : '';
+  return '<div class="card">' + media + '<div class="body">' + badge +
+    '<div class="prompt">'+esc(it.prompt||'(ללא תיאור)')+'</div>' +
+    '<div class="meta"><span>'+timeHe(it.at)+'</span><span>'+srcHe(it.source)+'</span></div>' +
+    ((openBtn||dlBtn) ? '<div class="actions">'+openBtn+dlBtn+'</div>' : '') +
+    '</div></div>';
+}
+
+function render(){
+  const q = query.trim();
+  const list = items.filter(it =>
+    (filter==='all' || it.type===filter) &&
+    (!q || (it.prompt||'').includes(q))
+  );
+  if (!list.length){
+    grid.innerHTML = '<div id="empty">😕 לא נמצאו תוצרים' +
+      (q ? ' לחיפוש "'+esc(q)+'"' : '') +
+      '<br><small>צור תמונה / סטיקר / אתר / שיר בבוט — והם יופיעו כאן אוטומטית ✨</small></div>';
+    return;
+  }
+  grid.innerHTML = list.map(cardHTML).join('');
+  grid.querySelectorAll('img.prev').forEach(img => {
+    img.onclick = () => {
+      document.getElementById('lightImg').src = img.dataset.full;
+      document.getElementById('lightCap').textContent = img.dataset.cap || '';
+      document.getElementById('light').classList.add('open');
+    };
+  });
+}
+
+async function load(){
+  grid.innerHTML = '<div id="loading"><span class="spin">⏳</span><br>טוען תוצרים...</div>';
+  try {
+    const r = await fetch('/api/gallery', {cache:'no-store'});
+    const j = await r.json();
+    items = Array.isArray(j.items) ? j.items : [];
+    const counts = j.counts || {};
+    renderStats(counts);
+    renderChips(counts);
+    render();
+  } catch(e){
+    grid.innerHTML = '<div id="empty">😢 טעינת הגלריה נכשלה — נסה לרענן 🔄</div>';
+  }
+}
+
+document.getElementById('q').addEventListener('input', e => { query = e.target.value; render(); });
+document.getElementById('refreshBtn').onclick = load;
+document.getElementById('lightX').onclick = () => document.getElementById('light').classList.remove('open');
+document.getElementById('light').onclick = e => {
+  if (e.target.id==='light') document.getElementById('light').classList.remove('open');
+};
+document.addEventListener('keydown', e => {
+  if (e.key==='Escape') document.getElementById('light').classList.remove('open');
+});
+
+// מצב בהיר/כהה (נשמר מקומית)
+const themeBtn = document.getElementById('themeBtn');
+function applyTheme(){
+  const light = localStorage.getItem('gal-theme')==='light';
+  document.body.classList.toggle('light', light);
+  themeBtn.textContent = light ? '☀️' : '🌙';
+}
+themeBtn.onclick = () => {
+  localStorage.setItem('gal-theme', document.body.classList.contains('light') ? 'dark' : 'light');
+  applyTheme();
+};
+applyTheme();
+load();
+setInterval(load, 60000); // רענון שקט כל דקה
+</script>
+</body>
+</html>

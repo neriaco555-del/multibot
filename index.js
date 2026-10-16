@@ -1196,6 +1196,7 @@ async function handleSticker(sock, remoteJid, msg, quoted, aiPrompt = '') {  // 
         const base = await removeStickerBackground(buffer);
         const sticker = (cap.top || cap.bottom) ? await memeSticker(base, cap.top, cap.bottom) : await toStickerBuffer(base);
         await sock.sendMessage(remoteJid, { sticker });
+        try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'sticker', prompt: String(p).slice(0, 300), buffer, ext: 'png', source: 'whatsapp' }); } catch {}
       } catch (e) {
         console.error('ai-sticker fail:', e);
         await sock.sendMessage(remoteJid, { text: `😢 יצירת הסטיקר נכשלה (${(e.message || '').slice(0, 100)}).\nנסה תיאור אחר או שלח תמונה.` });
@@ -4145,6 +4146,7 @@ async function handleChatMessage(sock, botJid, msg) {
                 const _doneCap = [`😍🔥 קבל/י!`, `✨🎉 תתחדש/י!`, `🤩💥 יצא אש!`];
                 await sock.sendMessage(remoteJid, { image: imgBuf, caption: `🎨 "${prompt.slice(0, 200)}"\n${_doneCap[Math.floor(Math.random() * _doneCap.length)]}` });
                 lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now() });
+                try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: prompt.slice(0, 300), buffer: imgBuf, ext: 'jpg', source: 'whatsapp' }); } catch {}
                 return;
               }
             } catch (e) {
@@ -4160,6 +4162,7 @@ async function handleChatMessage(sock, botJid, msg) {
               caption += `\n${['😍🔥 קבל/י!', '✨🎉 תתחדש/י!', '🤩💥 יצא אש!'][Math.floor(Math.random() * 3)]}\n\nלא אהבת? נסה להוסיף פרטים (צבע, רקע, סגנון) ושלח שוב.`;
               await sock.sendMessage(remoteJid, { image: buffer, caption });
               lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now() });
+              try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: prompt.slice(0, 300), buffer, ext: 'jpg', source: 'whatsapp' }); } catch {}
             } catch (e) {
               console.error('image fail:', e);
               await sock.sendMessage(remoteJid, { text: `😢 יצירת התמונה נכשלה (${(e.message || '').slice(0, 120)}).\n\nנסה:\n• תיאור אחר עם יותר פרטים\n• שוב בעוד דקה (השרת החינמי עמוס לפעמים)` });
@@ -4962,9 +4965,9 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
-        // --- תמלול הקלטה ---
+        // --- תמלול הקלטה (כולל שגיאות כתיב נפוצות) ---
         {
-          if (/^(תמלל)$/i.test(text)) {
+          if (/^(תמלל|תמלול|תמללי|תמללו|תמלות)$/i.test(text)) {
             const qm = quoted?.audioMessage ? { key: { remoteJid, id: 'q', fromMe: false }, message: quoted } : null;
             const target = msg.message?.audioMessage ? msg : qm;
             if (!target) {
