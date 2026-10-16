@@ -1548,8 +1548,16 @@ const server = http.createServer(async (req, res) => {
           } else if (/^https?:\/\/.{5,500}$/i.test(String(body.url || ''))) {
             url = String(body.url); // אתר/קישור חיצוני (למשל אתר שנוצר בבוט)
           }
-          const { logCreation } = await import('./gallery-log.js');
+          const { logCreation, readGalleryLog } = await import('./gallery-log.js');
           logCreation({ type, prompt, url, source, extra: { at } });
+          // אימות שהרשומה נשמרה באמת (אחרת הלקוח יחשוב שהצליח)
+          try {
+            const logged = readGalleryLog().some((g) =>
+              (url && g.url === url) || (!url && g.prompt === prompt && Math.abs((g.at || 0) - at) < 5000));
+            if (!logged) throw new Error('LOG_VERIFY_FAIL');
+          } catch (e) {
+            throw new Error('שמירת לוג נכשלה: ' + String((e && e.message) || e).slice(0, 100));
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, url }));
         } catch (e) {
