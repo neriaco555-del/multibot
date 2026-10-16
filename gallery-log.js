@@ -89,6 +89,7 @@ export function logCreationWithFile({ type = 'image', prompt = '', buffer = null
 import 'dotenv/config';
 
 const QUEUE_FILE = new URL('./gallery-queue.json', import.meta.url);
+const QUEUE_PATH = fileURLToPath(QUEUE_FILE);
 const QUEUE_MAX = 100;
 const PUSH_MAX_BYTES = 8 * 1048576; // קבצים גדולים מוקטנים (תמונות) או נשלחים כמטא-דאטה בלבד
 
@@ -105,9 +106,8 @@ function readQueue() {
 }
 function writeQueue(q) {
   try {
-    const tmp = String(QUEUE_FILE).replace('file://', '') + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(q.slice(0, QUEUE_MAX)));
-    fs.renameSync(tmp, String(QUEUE_FILE).replace('file://', ''));
+    fs.writeFileSync(QUEUE_PATH + '.tmp', JSON.stringify(q.slice(0, QUEUE_MAX)));
+    fs.renameSync(QUEUE_PATH + '.tmp', QUEUE_PATH);
   } catch {}
 }
 
