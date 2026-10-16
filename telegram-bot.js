@@ -53,8 +53,10 @@ const firstWord = (s) => (String(s || '').split(/\s+/)[0] || '').toLowerCase().r
 // כינויי לטינית (מופיעים בתפריט הפקודות של טלגרם) → עברית
 const LATIN_ALIAS = {
   tmuna: 'תמונה', sticker: 'סטיקר', shir: 'שיר', video: 'וידאו', daber: 'דבר',
-  mazeg: 'מזג', news: 'חדשות', trivia: 'טריוויה', help: 'עזרה', start: 'עזרה',
+  mazeg: 'מזג', news: 'חדשות', trivia: 'טריוויה', help: 'עזרה',
   status: 'מצב', qr: 'qr', poll: 'סקר', song: 'שיר', translate: 'תרגם',
+  language: 'שפה', lang: 'שפה', gallery: 'גלריה', menu: 'תפריט', image: 'תמונה',
+  weather: 'מזג', speak: 'דבר', say: 'דבר', songdl: 'הורד-שיר',
 };
 const noMd = (s) => String(s || '').replace(/[*_`]/g, '');
 // cooldown לפקודות כבדות (שלא ישרפו קרדיטים)
@@ -301,32 +303,240 @@ const HELP = `🤖 *מולטי בוט — כל הפקודות (גם בעברית
 📸 /תמונת-פרופיל (בתשובה למשתמש) · 🌐 /אתר (בניית אתר חי!)
 💬 או פשוט כתוב שאלה — אני מבין לבד!`;
 
-/* ---------- 📋 תפריט כפתורים ---------- */
-const MENU = {
-  tmuna: '🎨 *יצירת תמונות*\nפשוט כתוב תיאור, למשל:\n`חתול אסטרונאוט על הירח`\n(אפשר גם: `/תמונה חתול אסטרונאוט`)',
-  shir: '🎵 *שירים*\nכתוב שם שיר + זמר.\nדוגמה: `עומר אדם מלכת הדור`\n(אפשר גם `/שיר ...`)',
-  video: '🎬 *סרטונים*\nכתוב נושא.\nדוגמה: `שערים של מסי`\n(אפשר גם `/וידאו ...`)',
-  daber: '🔊 *הקראה בקול*\nכתוב טקסט ואקריא אותו.\nדוגמה: `מזל טוב ליום ההולדת!`',
-  mazeg: '🌤️ *מזג אוויר*\nכתוב עיר.\nדוגמה: `מזג אוויר בחיפה`',
-  news: '📰 *חדשות*\nכתוב `חדשות` לכותרות עדכניות.',
-  fun: '😂 *כיף*\nפשוט כתוב, למשל:\n`בדיחה` · `חידה` · `עובדה על חלל`\n`סיפור דרקון` · `מתכון פנקייק` · `ברכה לאבא` · `מילון אהבה`',
-  games: '🎮 *משחקים*\n`טריוויה` — שאלות ניקוד\n`איקס-עיגול` — משחק לשניים (`/xo מספר` למהלך)\n`סקר שאלה | א | ב` — סקר מקורי\n`אמת-או-חובה` · `מילים-מעורבבות` · `תורנות`',
-  dl: '⬇️ *הורדות (לשימוש אישי)*\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4 עד ~45MB',
-  help: null, // נשלח HELP מלא
-  kolot: 'VOICES_MENU',
+/* ---------- 🌍 שפות (בחירה ב-/start, נשמר לכל משתמש) ---------- */
+const LANGS = [
+  { c: 'he', n: 'עברית', f: '🇮🇱', en: 'Hebrew' },
+  { c: 'ar', n: 'العربية', f: '🇸🇦', en: 'Arabic' },
+  { c: 'en', n: 'English', f: '🇬🇧', en: 'English' },
+  { c: 'ru', n: 'Русский', f: '🇷🇺', en: 'Russian' },
+  { c: 'fr', n: 'Français', f: '🇫🇷', en: 'French' },
+  { c: 'es', n: 'Español', f: '🇪🇸', en: 'Spanish' },
+  { c: 'de', n: 'Deutsch', f: '🇩🇪', en: 'German' },
+  { c: 'it', n: 'Italiano', f: '🇮🇹', en: 'Italian' },
+  { c: 'pt', n: 'Português', f: '🇧🇷', en: 'Portuguese' },
+  { c: 'uk', n: 'Українська', f: '🇺🇦', en: 'Ukrainian' },
+  { c: 'am', n: 'አማርኛ', f: '🇪🇹', en: 'Amharic' },
+  { c: 'zh', n: '中文', f: '🇨🇳', en: 'Chinese' },
+  { c: 'ja', n: '日本語', f: '🇯🇵', en: 'Japanese' },
+  { c: 'hi', n: 'हिन्दी', f: '🇮🇳', en: 'Hindi' },
+  { c: 'tr', n: 'Türkçe', f: '🇹🇷', en: 'Turkish' },
+  { c: 'fa', n: 'فارسی', f: '🇮🇷', en: 'Persian' },
+  { c: 'pl', n: 'Polski', f: '🇵🇱', en: 'Polish' },
+  { c: 'ro', n: 'Română', f: '🇷🇴', en: 'Romanian' },
+  { c: 'nl', n: 'Nederlands', f: '🇳🇱', en: 'Dutch' },
+  { c: 'el', n: 'Ελληνικά', f: '🇬🇷', en: 'Greek' },
+  { c: 'hu', n: 'Magyar', f: '🇭🇺', en: 'Hungarian' },
+  { c: 'cs', n: 'Čeština', f: '🇨🇿', en: 'Czech' },
+  { c: 'sv', n: 'Svenska', f: '🇸🇪', en: 'Swedish' },
+  { c: 'ko', n: '한국어', f: '🇰🇷', en: 'Korean' },
+  { c: 'id', n: 'Bahasa Indonesia', f: '🇮🇩', en: 'Indonesian' },
+  { c: 'th', n: 'ไทย', f: '🇹🇭', en: 'Thai' },
+  { c: 'vi', n: 'Tiếng Việt', f: '🇻🇳', en: 'Vietnamese' },
+];
+const langName = (code) => (LANGS.find((l) => l.c === code) || LANGS[0]);
+function getLang(uid) {
+  const l = users[String(uid)]?.lang;
+  return LANGS.some((x) => x.c === l) ? l : 'he';
+}
+function setLang(uid, code) {
+  const id = String(uid);
+  const u = users[id] || (users[id] = { name: '', username: '', first: 0, msgs: 0, cmds: {} });
+  u.lang = code;
+  saveUsers();
+}
+/* מחרוזות ממשק: עברית + אנגלית ביד, שאר השפות בתרגום-מכונה עם מטמון */
+const STR = {
+  start_hi: { he: '🤖 *היי {name}! אני מולטי בוט* 👋\nכתוב לי כל דבר — שאלה, בקשה, רעיון — ואבין לבד. בלי לזכור פקודות!', en: "🤖 *Hi {name}! I'm MultiBot* 👋\nJust write anything — a question, request, idea — and I'll understand. No need to memorize commands!" },
+  kb_hint: { he: 'המקלדת למטה תמיד כאן 👇', en: 'The keyboard below is always here 👇' },
+  menu_prompt: { he: '🤖 *מה בא לך לעשות?*\n(אפשר ללחוץ — או פשוט לכתוב חופשי, אני מבין לבד 👇)', en: "🤖 *What would you like to do?*\n(You can tap — or just write freely, I understand 👇)" },
+  help: { he: `🤖 *מולטי בוט — כל הפקודות (גם בעברית חופשית!)*
+
+🎨 יצירה: /תמונה · /סטיקר · /דבר (הקראה)
+🎙️ קולות להקראה: /קולות (גברי/נשי)
+🖼️ הגלריה שלי: /גלריה (כל התמונות שיצרת)
+🎵 מדיה: /שיר · /וידאו · /תמונות
+🌤️ מידע: /מזג · /חדשות · /דולר · /ביטקוין · /שבת · /מניה · /מדד · /קצר · /רעידת-אדמה · /זיהום-אוויר · /תרגם
+😂 כיף: /בדיחה · /חידה · /עובדה · /סיפור · /מתכון · /ברכה · /קוד · ועוד
+🎲 מהיר: /קוביה · /מטבע · /בחר · /הגרלה · /סיסמה · /מספר · /צבע · /תאריך · /שעה · /עד
+🐶 חיות: /כלב · /חתול · /שועל · 🛒 /קנה · 🔳 /qr
+⬇️ הורדות: /הורד-שיר · /הורד-וידאו (לשימוש אישי)
+🎮 משחקים: /טריוויה · /איקס-עיגול · /סקר · /תזכורת · /נקודות · /טופ
+🫢 /אמת-או-חובה · 🔀 /מילים-מעורבבות · 📋 /תורנות · 💬 /סכם-צאט
+📸 /תמונת-פרופיל (בתשובה למשתמש) · 🌐 /אתר (בניית אתר חי!)
+🌍 /שפה (Language) — החלפת שפה
+💬 או פשוט כתוב שאלה — אני מבין לבד!`, en: `🤖 *MultiBot — all commands (free text works too!)*
+
+🎨 Create: /image · /sticker · /speak (text-to-speech)
+🎙️ Speech voices: /voices (male/female)
+🖼️ My gallery: /gallery (everything you created)
+🎵 Media: /song · /video · /images
+🌤️ Info: /weather · /news · /dollar · /bitcoin · /shabbat · /stock · /index · /shorten · /translate
+😂 Fun: /joke · /riddle · /fact · /story · /recipe · /greeting · /code · and more
+🎲 Quick: /dice · /coin · /choose · /raffle · /password · /number · /color · /date · /time · /countdown
+🐶 Animals: /dog · /cat · /fox · 🛒 /buy · 🔳 /qr
+⬇️ Downloads: /download-song · /download-video (personal use)
+🎮 Games: /trivia · /tic-tac-toe · /poll · /reminder · /points · /top
+📋 Duty roster · 💬 /summarize-chat
+📸 /profile-pic (reply to a user) · 🌐 /site (build a live website!)
+🌍 /language — change language
+💬 Or just ask anything — I understand!` },
+  b_tmuna: { he: '🎨 תמונה', en: '🎨 Image' },
+  b_shir: { he: '🎵 שיר', en: '🎵 Song' },
+  b_video: { he: '🎬 וידאו', en: '🎬 Video' },
+  b_daber: { he: '🔊 הקראה', en: '🔊 Speak' },
+  b_mazeg: { he: '🌤️ מזג אוויר', en: '🌤️ Weather' },
+  b_news: { he: '📰 חדשות', en: '📰 News' },
+  b_fun: { he: '😂 כיף', en: '😂 Fun' },
+  b_games: { he: '🎮 משחקים', en: '🎮 Games' },
+  b_dl: { he: '⬇️ הורדות', en: '⬇️ Downloads' },
+  b_kolot: { he: '🎙️ קולות', en: '🎙️ Voices' },
+  b_help: { he: '❓ עזרה', en: '❓ Help' },
+  m_tmuna: { he: '🎨 *יצירת תמונות*\nפשוט כתוב תיאור, למשל:\n`חתול אסטרונאוט על הירח`\n(אפשר גם: `/תמונה חתול אסטרונאוט`)', en: '🎨 *Image generation*\nJust write a description, e.g.:\n`an astronaut cat on the moon`\n(you can also use `/image ...`)' },
+  m_shir: { he: '🎵 *שירים*\nכתוב שם שיר + זמר.\nדוגמה: `עומר אדם מלכת הדור`\n(אפשר גם `/שיר ...`)', en: '🎵 *Songs*\nWrite song name + artist.\nExample: `Imagine Dragons Believer`\n(you can also use `/song ...`)' },
+  m_video: { he: '🎬 *סרטונים*\nכתוב נושא.\nדוגמה: `שערים של מסי`\n(אפשר גם `/וידאו ...`)', en: '🎬 *Videos*\nWrite a topic.\nExample: `funny cats`\n(you can also use `/video ...`)' },
+  m_daber: { he: '🔊 *הקראה בקול*\nכתוב טקסט ואקריא אותו.\nדוגמה: `מזל טוב ליום ההולדת!`', en: '🔊 *Text to speech*\nWrite text and I will read it aloud.\nExample: `Happy birthday!`' },
+  m_mazeg: { he: '🌤️ *מזג אוויר*\nכתוב עיר.\nדוגמה: `מזג אוויר בחיפה`', en: '🌤️ *Weather*\nWrite a city.\nExample: `weather in London`' },
+  m_news: { he: '📰 *חדשות*\nכתוב `חדשות` לכותרות עדכניות.', en: '📰 *News*\nWrite `news` for the latest headlines.' },
+  m_fun: { he: '😂 *כיף*\nפשוט כתוב, למשל:\n`בדיחה` · `חידה` · `עובדה על חלל`\n`סיפור דרקון` · `מתכון פנקייק` · `ברכה לאבא` · `מילון אהבה`', en: '😂 *Fun*\nJust write, e.g.:\n`joke` · `riddle` · `fact about space`\n`dragon story` · `pancake recipe`' },
+  m_games: { he: '🎮 *משחקים*\n`טריוויה` — שאלות ניקוד\n`איקס-עיגול` — משחק לשניים (`/xo מספר` למהלך)\n`סקר שאלה | א | ב` — סקר מקורי\n`אמת-או-חובה` · `מילים-מעורבבות` · `תורנות`', en: '🎮 *Games*\n`trivia` — quiz with points\ntic-tac-toe — game for two\n`poll question | a | b` — native poll' },
+  m_dl: { he: '⬇️ *הורדות (לשימוש אישי)*\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4 עד ~45MB', en: '⬇️ *Downloads (personal use)*\n`download-song ...` — MP3\n`download-video ...` — MP4 up to ~45MB' },
+  lang_done: { he: 'השפה נבחרה: {lang} ✅\nמעכשיו אדבר איתך בשפה הזו 🌍', en: 'Language set: {lang} ✅\nFrom now on I will speak to you in this language 🌍' },
+  lang_here: { he: '🌍 *החלפת שפה*\nבחר/י שפה מהרשימה 👇', en: '🌍 *Change language*\nPick a language from the list 👇' },
+  gal_empty: { he: '🖼️ עוד אין לך יצירות. צור תמונה עם /תמונה!', en: '🖼️ No creations yet. Make one with /image!' },
 };
-async function sendMenu(chatId) {
+const I18N_FILE = new URL('./tg-i18n.json', import.meta.url);
+let i18nCache = {};
+try { i18nCache = JSON.parse(fs.readFileSync(I18N_FILE, 'utf-8')); } catch {}
+let i18nTimer = null;
+function saveI18n() {
+  clearTimeout(i18nTimer);
+  i18nTimer = setTimeout(() => { try { fs.writeFileSync(I18N_FILE, JSON.stringify(i18nCache)); } catch {} }, 5000);
+}
+const fmtVars = (s, vars = {}) => String(s || '').replace(/\{(\w+)\}/g, (_, k) => (vars[k] !== undefined ? vars[k] : `{${k}}`));
+async function mtEnXx(textEn, code) {
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(String(textEn).slice(0, 900))}&langpair=en|${code}`, {
+      signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!r.ok) throw new Error('mt ' + r.status);
+    const j = await r.json();
+    const out = j?.responseData?.translatedText?.trim();
+    if (!out || /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID/i.test(out)) throw new Error('mt-empty');
+    return out;
+  } finally {
+    clearTimeout(tm);
+  }
+}
+/** מחרוזת ממשק בשפת המשתמש (עברית/אנגלית ביד, השאר מתורגם אוטומטית עם מטמון). */
+async function t(uid, key, vars = {}) {
+  const rec = STR[key];
+  if (!rec) return fmtVars(key, vars);
+  const lang = getLang(uid);
+  if (lang === 'he') return fmtVars(rec.he, vars);
+  if (lang === 'en') return fmtVars(rec.en || rec.he, vars);
+  const ck = lang + '|' + key;
+  if (!i18nCache[ck]) {
+    try {
+      i18nCache[ck] = await mtEnXx(rec.en || rec.he, lang);
+      saveI18n();
+    } catch {
+      return fmtVars(rec.en || rec.he, vars);
+    }
+  }
+  return fmtVars(i18nCache[ck], vars);
+}
+/** צ'אט AI בשפת המשתמש (עברית = התנהגות קיימת בדיוק). */
+async function chatL(uid, prompt, history = []) {
+  const lang = getLang(uid);
+  if (lang === 'he') return chatAI(prompt, history);
+  const L = langName(lang);
+  return chatAI(`[System instruction: reply ONLY in ${L.en} (${L.n}). Never reply in Hebrew.] ${prompt}`, history);
+}
+/** סיומת שפה לתיאור תמונה (vision). */
+function langSuffix(uid) {
+  const lang = getLang(uid);
+  if (lang === 'he') return '';
+  return ` (Answer in ${langName(lang).en} only)`;
+}
+const LANG_TITLE = '🌍 *בחר/י שפה · Choose language*\nاختر اللغة · Выберите язык · Elige idioma · Choisis ta langue 👇';
+async function sendLangMenu(chatId) {
+  const kb = new InlineKeyboardBuilder();
+  LANGS.forEach((L, i) => {
+    kb.text(`${L.f} ${L.n}`, `lang:${L.c}`);
+    if (i % 2 === 1) kb.row();
+  });
+  if (LANGS.length % 2 === 1) kb.row();
+  return api.sendMessage({ chat_id: chatId, text: LANG_TITLE, parse_mode: 'Markdown', reply_markup: kb.build() })
+    .catch(() => sendSafe(chatId, LANG_TITLE));
+}
+const pendingStart = new Map(); // uid -> deep-link (עד בחירת שפה)
+const kbMaps = new Map(); // chatId -> Map(תווית-כפתור -> פקודה) למקלדת המתורגמת
+function kbMapSet(chatId, map) {
+  kbMaps.set(String(chatId), map);
+  while (kbMaps.size > 500) kbMaps.delete(kbMaps.keys().next().value);
+}
+/** חבילת פתיחה: ברכה + מקלדת קבועה מתורגמת + תפריט — בשפת המשתמש */
+async function sendStartPack(chatId, uid, from) {
+  const keys = [
+    ['b_tmuna', 'תמונה'], ['b_shir', 'שיר'],
+    ['b_video', 'וידאו'], ['b_daber', 'דבר'],
+    ['b_mazeg', 'מזג'], ['b_news', 'חדשות'],
+    ['b_fun', 'fun-cmd'], ['b_games', 'games-cmd'],
+    ['b_dl', 'dl-cmd'], ['b_help', 'help-cmd'],
+  ];
+  const labels = await Promise.all(keys.map(([k]) => t(uid, k)));
+  const map = new Map();
+  const rows = [];
+  const cmds = ['תמונה', 'שיר', 'וידאו', 'דבר', 'מזג', 'חדשות', 'fun-cmd', 'games-cmd', 'dl-cmd', 'help-cmd'];
+  for (let i = 0; i < labels.length; i += 2) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 2, labels.length); j++) {
+      row.push({ text: labels[j] });
+      if (labels[j] !== cmds[j]) map.set(labels[j], cmds[j]);
+    }
+    rows.push(row);
+  }
+  kbMapSet(chatId, map);
+  await api.sendMessage({
+    chat_id: chatId,
+    text: await t(uid, 'start_hi', { name: from }),
+    parse_mode: 'Markdown',
+  }).catch(() => {});
+  await api.sendMessage({
+    chat_id: chatId,
+    text: await t(uid, 'kb_hint'),
+    reply_markup: { keyboard: rows, resize_keyboard: true, is_persistent: true, input_field_placeholder: '✍️' },
+  }).catch(() => {});
+  return sendMenu(chatId, uid);
+}
+/* ---------- 📋 תפריט כפתורים (מתורגם דרך STR: m_* / b_*) ---------- */
+const MENU_KEYS = ['tmuna', 'shir', 'video', 'daber', 'mazeg', 'news', 'fun', 'games', 'dl', 'kolot', 'help'];
+async function menuSend(chatId, uid, key) {
+  if (key === 'help') return sendSafe(chatId, await t(uid, 'help'));
+  if (key === 'kolot') {
+    return api.sendMessage({ chat_id: chatId, text: await t(uid, 'b_kolot'), parse_mode: 'Markdown', reply_markup: voicesKeyboard(getVoice(uid)) }).catch(() => {});
+  }
+  if (!MENU_KEYS.includes(key)) return;
+  return sendSafe(chatId, await t(uid, 'm_' + key));
+}
+async function sendMenu(chatId, uid) {
+  const [l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11, prompt] = await Promise.all(
+    ['b_tmuna', 'b_shir', 'b_video', 'b_daber', 'b_mazeg', 'b_news', 'b_fun', 'b_games', 'b_dl', 'b_kolot', 'b_help', 'menu_prompt']
+      .map((k) => t(uid, k))
+  );
   const kb = new InlineKeyboardBuilder()
-    .text('🎨 תמונה', 'menu:tmuna').text('🎵 שיר', 'menu:shir').text('🎬 וידאו', 'menu:video').row()
-    .text('🔊 הקראה', 'menu:daber').text('🌤️ מזג אוויר', 'menu:mazeg').text('📰 חדשות', 'menu:news').row()
-    .text('😂 כיף', 'menu:fun').text('🎮 משחקים', 'menu:games').text('⬇️ הורדות', 'menu:dl').row()
-    .text('🎙️ קולות', 'menu:kolot').text('❓ עזרה', 'menu:help').build();
+    .text(l1, 'menu:tmuna').text(l2, 'menu:shir').text(l3, 'menu:video').row()
+    .text(l4, 'menu:daber').text(l5, 'menu:mazeg').text(l6, 'menu:news').row()
+    .text(l7, 'menu:fun').text(l8, 'menu:games').text(l9, 'menu:dl').row()
+    .text(l10, 'menu:kolot').text(l11, 'menu:help').build();
   return api.sendMessage({
     chat_id: chatId,
-    text: '🤖 *מה בא לך לעשות?*\n(אפשר ללחוץ — או פשוט לכתוב חופשי, אני מבין לבד 👇)',
+    text: prompt,
     parse_mode: 'Markdown',
     reply_markup: kb,
-  }).catch(() => api.sendMessage({ chat_id: chatId, text: '🤖 מה בא לך לעשות? כתוב /עזרה.', reply_markup: kb }));
+  }).catch(() => api.sendMessage({ chat_id: chatId, text: prompt.replace(/[*_`]/g, ''), reply_markup: kb }));
 }
 
 // כפתורי המקלדת הקבועה → פקודות (בלי צורך להקליד /)
@@ -410,7 +620,7 @@ function pushGallery(uid, fid, prompt) {
 }
 async function showGallery(chatId, uid) {
   const a = gallery[String(uid)] || [];
-  if (!a.length) return sendSafe(chatId, '🖼️ עוד אין לך יצירות. צור תמונה עם /תמונה!');
+  if (!a.length) return sendSafe(chatId, await t(uid, 'gal_empty'));
   try {
     await api.sendMediaGroup({
       chat_id: chatId,
@@ -689,7 +899,9 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     let t = null;
     try {
       const { text } = await Promise.race([
-        chatAI('כתוב שאלת טריוויה בעברית עם 4 אפשרויות. JSON בלבד: {"q":"...","opts":["...","...","...","..."],"a":0}', []),
+        chatL(uid, getLang(uid) === 'he'
+          ? 'כתוב שאלת טריוויה בעברית עם 4 אפשרויות. JSON בלבד: {"q":"...","opts":["...","...","...","..."],"a":0}. המספר a הוא אינדקס התשובה הנכונה (0-3).'
+          : `Write one trivia question in ${langName(getLang(uid)).en} with 4 options. JSON only: {"q":"...","opts":["...","...","...","..."],"a":0}. The number a is the index of the correct answer (0-3).`, []),
         new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 20000)),
       ]);
       const j = JSON.parse((String(text || '').match(/\{[\s\S]*\}/) || [])[0] || 'null');
@@ -764,36 +976,30 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (!mine.length) return say('⏰ אין תזכורות פעילות.');
     return say('⏰ *שלך:*\n' + mine.map(([, r]) => `• ${r.text.slice(0, 80)} — ${new Date(r.at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join('\n'));
   }
-  // 📖 עזרה / מצב / שאל / תפריט
+  // 📖 עזרה / מצב / שאל / תפריט / שפה
   if (['עזרה', 'help', 'תפריט'].includes(cmd)) {
-    await say('🤖 *כל היכולות כאן למטה* 👇\n(או כתוב חופשי — אני מבין לבד)');
-    return sendMenu(chatId);
+    await say(await t(uid, 'menu_prompt'));
+    return sendMenu(chatId, uid);
   }
-  if (['תפריט-פקודות', 'menu'].includes(cmd)) return sendMenu(chatId);
-  if (cmd === 'start' && q) {
-    const r = START_ROUTES[q.trim().toLowerCase().slice(0, 20)];
-    if (r) return handleCommand(chatId, from, uid, r, '', msg);
-    return sendMenu(chatId);
+  if (['תפריט-פקודות', 'menu'].includes(cmd)) return sendMenu(chatId, uid);
+  if (['שפה', 'שפות', 'language'].includes(cmd)) return sendLangMenu(chatId);
+  // כפתורי מקלדת מתורגמת (fun/games/dl/help בשפות אחרות)
+  if (['fun-cmd', 'games-cmd', 'dl-cmd', 'help-cmd'].includes(cmd)) {
+    return menuSend(chatId, uid, { 'fun-cmd': 'fun', 'games-cmd': 'games', 'dl-cmd': 'dl', 'help-cmd': 'help' }[cmd]);
   }
   if (cmd === 'start') {
-    await say(`🤖 *היי ${from}! אני מולטי בוט* 👋\nכתוב לי כל דבר בעברית — שאלה, בקשה, רעיון — ואבין לבד. בלי לזכור פקודות!`);
-    await api.sendMessage({
-      chat_id: chatId,
-      text: 'המקלדת למטה תמיד כאן 👇',
-      reply_markup: {
-        keyboard: [
-          [{ text: '🎨 תמונה' }, { text: '🎵 שיר' }],
-          [{ text: '🎬 וידאו' }, { text: '🔊 הקראה' }],
-          [{ text: '🌤️ מזג אוויר' }, { text: '📰 חדשות' }],
-          [{ text: '🎯 טריוויה' }, { text: '📊 סקר' }],
-          [{ text: '⬇️ הורדות' }, { text: '📋 תפריט' }],
-        ],
-        resize_keyboard: true,
-        is_persistent: true,
-        input_field_placeholder: 'כתוב חופשי או בחר 👇',
-      },
-    }).catch(() => {});
-    return sendMenu(chatId);
+    if (!users[String(uid)]?.lang) {
+      if (q) {
+        pendingStart.set(String(uid), q.trim().toLowerCase().slice(0, 20));
+        while (pendingStart.size > 200) pendingStart.delete(pendingStart.keys().next().value);
+      }
+      return sendLangMenu(chatId);
+    }
+    if (q) {
+      const r = START_ROUTES[q.trim().toLowerCase().slice(0, 20)];
+      if (r) return handleCommand(chatId, from, uid, r, '', msg);
+    }
+    return sendStartPack(chatId, uid, from);
   }
   // 📣 פרסום — הודעה מוכנה להפצה עם קישורים ישירים
   if (['פרסם', 'פרסומת', 'share', 'פרסום'].includes(cmd)) {
@@ -861,7 +1067,9 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     if (lines.length < 3) return say('אין מספיק הודעות לסיכום 🙂');
     try {
       const { text } = await Promise.race([
-        chatAI(`סכם בעברית ב-5 נקודות את השיחה:\n${lines.join('\n').slice(0, 3000)}`, []),
+        chatL(uid, getLang(uid) === 'he'
+          ? `סכם בעברית ב-5 נקודות את השיחה:\n${lines.join('\n').slice(0, 3000)}`
+          : `Summarize the following chat in 5 bullet points in ${langName(getLang(uid)).en}:\n${lines.join('\n').slice(0, 3000)}`, []),
         new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 25000)),
       ]);
       return say((text || '').trim().slice(0, 1500) || 'לא הצלחתי לסכם.');
@@ -906,7 +1114,7 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   if (['שאל', 'ai', 'gpt'].includes(cmd)) {
     if (q.length < 2) return needQ('💬 מה השאלה?');
     await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => {});
-    const { text } = await chatAI(q, []).catch(() => ({ text: '' }));
+    const { text } = await chatL(uid, q, []).catch(() => ({ text: '' }));
     const out = (text || '').trim().slice(0, 3000) || 'נסה שוב.';
     return say(out, { again: { prompt: q } });
   }
@@ -933,7 +1141,7 @@ bot.on('message', async (ctx) => {
         const buf = await fileBuf((msg.voice || msg.audio).file_id);
         const heard = await transcribeAudio(buf.slice(0, 8 * 1024 * 1024), 'voice.ogg');
         if (!heard || heard.trim().length < 2) return sendSafe(chatId, '😢 לא שמעתי טוב — נסה שוב.');
-        const { text } = await chatAI(heard.slice(0, 500), []).catch(() => ({ text: '' }));
+        const { text } = await chatL(uid, heard.slice(0, 500), []).catch(() => ({ text: '' }));
         return sendSafe(chatId, `🎤 שמעתי: "${heard.slice(0, 120)}"\n\n${(text || '').trim().slice(0, 2500) || 'נסה שוב.'}`);
       } catch {
         return sendSafe(chatId, '😢 התמלול נכשל כרגע.');
@@ -946,7 +1154,7 @@ bot.on('message', async (ctx) => {
         try {
           const { describeImage } = await import('./aimedia.js');
           const ph = msg.photo[msg.photo.length - 1];
-          const ans = await describeImage(await fileBuf(ph.file_id), c);
+          const ans = await describeImage(await fileBuf(ph.file_id), c + langSuffix(uid));
           return sendSafe(chatId, `👁️ ${ans}`);
         } catch { return sendSafe(chatId, '😢 לא הצלחתי לראות.'); }
       }
@@ -956,7 +1164,7 @@ bot.on('message', async (ctx) => {
       try {
         const { describeImage } = await import('./aimedia.js');
         const ph = msg.photo[msg.photo.length - 1];
-        const ans = await describeImage(await fileBuf(ph.file_id), 'מה רואים בתמונה?');
+        const ans = await describeImage(await fileBuf(ph.file_id), 'מה רואים בתמונה?' + langSuffix(uid));
         return sendSafe(chatId, `👁️ ${ans}\n\n💡 הגב עליה עם /סטיקר למדבקה ✨`);
       } catch { return sendSafe(chatId, '📸 קיבלתי תמונה! הגב עליה עם /סטיקר, או צרף כיתוב עם שאלה.');
       }
@@ -1002,7 +1210,7 @@ bot.on('message', async (ctx) => {
 
     // ניתוב טבעי
     if (t === '⬇️ הורדות') return sendSafe(chatId, '⬇️ *הורדות (לשימוש אישי)*\nכתוב:\n`הורד-שיר עומר אדם` — MP3\n`הורד-וידאו שערים` — MP4');
-    let line = MENU_BUTTONS[t] || text;
+    let line = MENU_BUTTONS[t] || kbMaps.get(String(chatId))?.get(t) || text;
     try { line = normalizeNaturalCommand(line) || line; } catch {}
     const fw = firstWord(line);
     if (!KNOWN_FIRST.has(fw) && line.length <= 300 && !trivia.get(chatId)) {
@@ -1022,7 +1230,7 @@ bot.on('message', async (ctx) => {
     if (done !== null && done !== undefined) return;
     // צ'אט חופשי
     await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => {});
-    const { text: ans } = await chatAI(line.slice(0, 500), []).catch(() => ({ text: '' }));
+    const { text: ans } = await chatL(uid, line.slice(0, 500), []).catch(() => ({ text: '' }));
     const free = (ans || '').trim().slice(0, 3000) || 'שמעתי 🙂 נסה לשאול שוב.';
     return say(free, { again: { prompt: line.slice(0, 500) } });
   } catch (e) {
@@ -1092,7 +1300,7 @@ bot.on('callback_query', async (ctx) => {
       }
       try {
         const { text } = await Promise.race([
-          chatAI(`תן רמז קצר אחד (עד 15 מילים) לשאלת הטריוויה, בלי לגלות את התשובה. שאלה: ${tr.q} תשובה נכונה (לא לגלות!): ${tr.opts[tr.a]}`, []),
+          chatL(uid, `תן רמז קצר אחד (עד 15 מילים) לשאלת הטריוויה, בלי לגלות את התשובה. שאלה: ${tr.q} תשובה נכונה (לא לגלות!): ${tr.opts[tr.a]}`, []),
           new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 20000)),
         ]);
         return sendSafe(chatId, `💡 *רמז:* ${(text || '').trim().slice(0, 300) || 'חשוב טוב...'}`);
@@ -1122,7 +1330,7 @@ bot.on('callback_query', async (ctx) => {
         if (rec.tool) {
           out = await runAiTool(rec.tool, rec.q || '');
         } else {
-          const r = await chatAI(String(rec.prompt || '').slice(0, 500), []);
+          const r = await chatL(uid, String(rec.prompt || '').slice(0, 500), []);
           out = (r && r.text) || '';
         }
         out = String(out || '').trim().slice(0, 3000) || 'נסה שוב.';
@@ -1130,17 +1338,25 @@ bot.on('callback_query', async (ctx) => {
       } catch { return sendSafe(chatId, '😢 נכשל — נסה שוב.'); }
     }
     // 📋 תפריט ראשי
-    if (data === 'menu:main') return sendMenu(chatId);
+    if (data === 'menu:main') return sendMenu(chatId, uid);
     if (data.startsWith('menu:')) {
-      const key = data.slice(5);
-      if (key === 'help') return sendSafe(chatId, HELP);
-      if (key === 'kolot') {
-        return api.sendMessage({ chat_id: chatId, text: '🎙️ *בחר קול ואפקט:*', parse_mode: 'Markdown', reply_markup: voicesKeyboard(getVoice(ctx.from?.id)) }).catch(() => {});
+      return menuSend(chatId, uid, data.slice(5));
+    }
+    // 🌍 בחירת שפה
+    if (data.startsWith('lang:')) {
+      const code = data.slice(5);
+      if (!LANGS.some((l) => l.c === code)) return;
+      setLang(uid, code);
+      touchUser(ctx, 'שפה', false);
+      const L = langName(code);
+      await sendSafe(chatId, await t(uid, 'lang_done', { lang: `${L.f} ${L.n}` }));
+      if (pendingStart.has(String(uid))) {
+        const prm = pendingStart.get(String(uid));
+        pendingStart.delete(String(uid));
+        const rr = START_ROUTES[String(prm || '').trim().toLowerCase().slice(0, 20)];
+        if (rr) return handleCommand(chatId, uname, uid, rr, '', { from: { id: uid } });
       }
-      if (!MENU[key]) return;
-      const txt = MENU[key];
-      if (txt) return sendSafe(chatId, txt);
-      return;
+      return sendStartPack(chatId, uid, uname);
     }
     if (data.startsWith('voice:')) {
       const v = data.slice(6) === 'male' ? 'male' : 'female';
