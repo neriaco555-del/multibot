@@ -620,7 +620,8 @@ function shabbatSend(sock, jid, content) {
 }
 // מונע שליחת תמונת שבת פעמיים לאותה שבת (לפי זמן כניסה)
 const shabbatImgSent = new Map(); // jid -> startKey
-// 🕯️ תמונת זמני שבת אוטומטית: מבקש מה-AI של התמונות ומוסר בקבוצה
+// 🕯️ תמונת זמני שבת אוטומטית: מבקש מה-AI הטוב (+16508702892, Instinct) ומוסר בקבוצה
+// אותו מסלול בדיוק כמו !תמונה: קודם Instinct, ואם נכשל — יצירה מקומית, ואם גם היא — טקסט
 async function sendShabbatImage(sock, jid) {
   const key = String(shabbatRangeCache?.start || '');
   if (key && shabbatImgSent.get(jid) === key) return;
@@ -635,24 +636,45 @@ async function sendShabbatImage(sock, jid) {
     const parsha = (cities || []).find((c) => c.parsha)?.parsha || '';
     const timesText = lines.length ? `\n\n${lines.join('\n')}` : '';
     const parshaText = parsha ? `\n📖 פרשת ${parsha}` : '';
-    // 2) הפרומפט שהמשתמש ביקש — בתוספת הזמנים כדי שהתמונה תהיה רלוונטית
+    // הפרומפט — בתוספת הזמנים כדי שהתמונה תהיה רלוונטית
     const aiPrompt = `תן לי תמונה של זמני שבת בערים נבחרות${lines.length ? ': ' + lines.join(', ') : ''}` +
       `, עיצוב ברכת שבת שלום חגיגית עם נרות שבת, חלות ופרחים, סגנון חמים ומזמין`;
-    console.log(`🕯️ shabbat image: מבקש מה-AI תמונה ל-${jid}`);
+    const caption = `🕯️ *שבת שלום!* ✨${parshaText}${timesText}\n\nהקבוצה נסגרת אוטומטית עד צאת שבת (הבוט נכבה חצי שעה לפני הדלקת נרות). הבוט נח ולא עונה.\nנתראה במוצאי שבת! 🌟`;
+    // 2) 🤖 קודם דרך ה-AI הטוב (+16508702892) — נשלח כפקודת !תמונה רגילה דרך התור
+    console.log(`🕯️ shabbat image: מבקש מ-Instinct תמונה ל-${jid}`);
+    try {
+      if (instinctCold()) throw new Error('INSTINCT_COLD');
+      const relayBuf = await requestInstinct(sock, `תמונה ${aiPrompt}`.slice(0, 500), jid);
+      if (relayBuf && relayBuf.length > 5000) {
+        // אם חזר סטיקר (webp) — ממירים לתמונה רגילה (כמו ב-!תמונה)
+        let imgBuf = relayBuf;
+        try {
+          if (relayBuf[0] === 0x52 && relayBuf[1] === 0x49) {
+            const { default: sharp } = await import('sharp');
+            imgBuf = await sharp(relayBuf).jpeg({ quality: 88 }).toBuffer();
+          }
+        } catch {}
+        await shabbatSend(sock, jid, { image: imgBuf, caption });
+        try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: aiPrompt.slice(0, 300), buffer: imgBuf, ext: 'jpg', source: 'shabbat-auto-instinct' }); } catch {}
+        return;
+      }
+    } catch (e) {
+      if (!/INSTINCT_COLD/.test(e?.message || '')) instinctBumpFail();
+      console.warn('🕯️ shabbat instinct skip, עובר ליצירה מקומית:', (e?.message || '').slice(0, 100));
+    }
+    // 3) גיבוי: יצירה מקומית (Gemini/Pollinations)
+    console.log(`🕯️ shabbat image: יצירה מקומית ל-${jid}`);
     try {
       const { buffer } = await generateImage(aiPrompt);
       if (buffer && buffer.length > 5000) {
-        await shabbatSend(sock, jid, {
-          image: buffer,
-          caption: `🕯️ *שבת שלום!* ✨${parshaText}${timesText}\n\nהקבוצה נסגרת אוטומטית עד צאת שבת (הבוט נכבה חצי שעה לפני הדלקת נרות). הבוט נח ולא עונה.\nנתראה במוצאי שבת! 🌟`,
-        });
+        await shabbatSend(sock, jid, { image: buffer, caption });
         try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: aiPrompt.slice(0, 300), buffer, ext: 'jpg', source: 'shabbat-auto' }); } catch {}
         return;
       }
     } catch (e) {
       console.warn('🕯️ shabbat image AI fail:', (e?.message || '').slice(0, 120));
     }
-    // גיבוי: אם ה-AI נכשל — לפחות טקסט זמנים
+    // גיבוי אחרון: אם שום תמונה לא הצליחה — לפחות טקסט זמנים
     if (lines.length) {
       await shabbatSend(sock, jid, {
         text: `🕯️ *שבת שלום!* ✨${parshaText}${timesText}\n\n(תמונת ה-AI לא הצליחה להיווצר הפעם 😢)`,
@@ -710,8 +732,9 @@ function requestInstinct(sock, prompt, chatJid, mediaBuf = null) {
     const pos = instinctQueue.length + (instinctRunning ? 1 : 0);
     instinctQueue.push({ prompt: String(prompt || '').slice(0, 1000), chatJid, mediaBuf, resolve, reject, at: Date.now() });
     // חיווי תור: אם יש בקשה פעילה/ממתינה לפנייך — אומרים, שלא ייראה תקוע
+    // (shabbatSend כדי שלא ייחסם בקבוצת שבת-מוד — בהפעלה רגילה זהה לשליחה רגילה)
     if (pos > 0 && /@g\.us$|@s\.whatsapp\.net$|@lid$/.test(String(chatJid || ''))) {
-      sock.sendMessage(chatJid, { text: `🎨 בתור ליצירה (מקום ${pos + 1}) — אשלח כשמוכן, סבלנות 🙏` }).catch(() => {});
+      shabbatSend(sock, chatJid, { text: `🎨 בתור ליצירה (מקום ${pos + 1}) — אשלח כשמוכן, סבלנות 🙏` }).catch(() => {});
     }
     pumpInstinct(sock).catch(() => {});
   });
@@ -1397,7 +1420,7 @@ async function schedulerTick() {
             try {
               await shabbatSend(sock, jid, { text: `🕯️ *שבת שלום!* ✨\n\nהקבוצה נסגרת אוטומטית עד צאת שבת (הבוט נכבה חצי שעה לפני הדלקת נרות). הבוט נח ולא עונה.\n⏳ שולח תמונת זמני שבת... 🌟` });
             } catch {}
-            // 🎨 מבקש מה-AI של התמונות "תן לי תמונה של זמני שבת בערים נבחרות" ושולח בקבוצה (לא חוסם את הטיק)
+            // 🎨 מבקש מה-AI הטוב (+16508702892) "תן לי תמונה של זמני שבת בערים נבחרות" ושולח בקבוצה (לא חוסם את הטיק)
             sendShabbatImage(sock, jid).catch(() => {});
           } else if (!nowAct && gd.shabbatState === 'on') {
             gd.shabbatState = 'off';
@@ -2050,7 +2073,8 @@ async function handleChatMessage(sock, botJid, msg) {
                 console.log(`🤖 instinct asks: ${qtext.slice(0, 80)}`);
                 if (activeJob) activeJob.waitingHuman = true;
                 try {
-                  await sock.sendMessage(p.chatJid, { text: `🤖 *Instinct שואל:*\n${qtext}\n\n_ענו כאן והתשובה תועבר אליו (3 דקות, אחרת אמשיך אוטומטית)_` });
+                  // shabbatSend כדי ששאלה לקבוצת שבת-מוד לא תיחסם ע"י שקט-שבת
+                  await shabbatSend(sock, p.chatJid, { text: `🤖 *Instinct שואל:*\n${qtext}\n\n_ענו כאן והתשובה תועבר אליו (3 דקות, אחרת אמשיך אוטומטית)_` });
                 } catch {}
                 // ⏱️ לא מחכים לנצח: בלי תשובה אנושית תוך 3 דקות — נופלים ליצירה ישירה
                 try { clearTimeout(instinctQTimer); } catch {}
@@ -2061,7 +2085,7 @@ async function handleChatMessage(sock, botJid, msg) {
                       const pend = instinctPending;
                       instinctPending = null;
                       if (activeJob) activeJob.waitingHuman = false;
-                      sock.sendMessage(pend.chatJid, { text: `🤖 לא עניתם — ממשיך אוטומטית בדרך אחרת... ⏳` }).catch(() => {});
+                      shabbatSend(sock, pend.chatJid, { text: `🤖 לא עניתם — ממשיך אוטומטית בדרך אחרת... ⏳` }).catch(() => {});
                       pend.reject(new Error('NO_HUMAN_ANSWER'));
                     }
                   } catch {}
@@ -2076,7 +2100,8 @@ async function handleChatMessage(sock, botJid, msg) {
             try {
               const buf = await downloadMediaRetry({ key: msg.key, message: msg.message }, 'instinct-late', 6);
               if (buf && buf.length > 5000) {
-                await sock.sendMessage(late.chatJid, { image: buf, caption: `🤖 *Instinct השלים (באיחור):*\n"${late.prompt.slice(0, 150)}"` });
+                // shabbatSend כדי שמסירה מאוחרת לקבוצת שבת-מוד לא תיחסם
+                await shabbatSend(sock, late.chatJid, { image: buf, caption: `🤖 *Instinct השלים (באיחור):*\n"${late.prompt.slice(0, 150)}"` });
                 console.log(`🤖 instinct late image delivered (${buf.length} bytes)`);
               }
             } catch (e) {

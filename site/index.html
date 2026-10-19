@@ -480,6 +480,208 @@ header .hic .ic{ width:23px; height:23px; }
 #pinbar button, #replybar button{ display:inline-flex; align-items:center; }
 #pinbar button .ic, #replybar button .ic{ width:16px; height:16px; }
 </style>
+<style id="mb-glass">
+/* ===== 🎨 מולטי בוט — עיצוב זכוכית כהה מודרני (Dark Glassmorphism) ===== */
+:root{
+  --mb-1:#070b16; --mb-2:#0c1324; --mb-3:#141c33;
+  --mb-glass:rgba(255,255,255,.055); --mb-glass2:rgba(255,255,255,.09);
+  --mb-stroke:rgba(255,255,255,.10); --mb-stroke2:rgba(255,255,255,.16);
+  --mb-text:#eaf1fb; --mb-muted:rgba(234,241,251,.58);
+  --mb-accent:#31e6a6; --mb-accent2:#6c8cff; --mb-accent3:#38bdf8;
+  --mb-glow:0 8px 30px rgba(49,230,166,.24);
+  /* remap legacy tokens so every existing rule adopts the new look */
+  --kPrimary:#31e6a6; --kSecondary:#6c8cff; --kWarn:#ffd166; --kErr:#ff5d7a;
+  --bg:#0c1324; --content:var(--mb-text); --muted:var(--mb-muted);
+  --bubble-in:rgba(255,255,255,.065); --input-bg:rgba(255,255,255,.075);
+  --wa-panel:rgba(255,255,255,.05); --wa-sheet:rgba(11,17,32,.74);
+  --wa-tick:#31e6a6; --wa-divider:rgba(255,255,255,.08); --wa-hover:rgba(255,255,255,.06);
+  --wa-shadow:0 2px 12px rgba(0,0,0,.35);
+}
+body.light{
+  --mb-1:#eef2fb; --mb-2:#e7edfa; --mb-3:#dde6f7;
+  --mb-glass:rgba(255,255,255,.7); --mb-glass2:rgba(255,255,255,.9);
+  --mb-stroke:rgba(15,23,42,.10); --mb-stroke2:rgba(15,23,42,.18);
+  --mb-text:#0f1a2e; --mb-muted:rgba(15,26,46,.6);
+  --bg:#eef2fb; --content:var(--mb-text); --muted:var(--mb-muted);
+  --bubble-in:rgba(255,255,255,.9); --input-bg:rgba(15,23,42,.05);
+  --wa-panel:rgba(255,255,255,.72); --wa-sheet:rgba(255,255,255,.86);
+  --wa-divider:rgba(15,23,42,.08); --wa-hover:rgba(15,23,42,.05);
+}
+body{ background:var(--mb-1); color:var(--mb-text); }
+body::before{
+  content:''; position:fixed; inset:-20%; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(38% 42% at 12% 6%, rgba(49,230,166,.20), transparent 62%),
+    radial-gradient(42% 46% at 88% 2%, rgba(108,140,255,.24), transparent 62%),
+    radial-gradient(50% 50% at 80% 94%, rgba(56,189,248,.16), transparent 60%),
+    radial-gradient(46% 46% at 6% 90%, rgba(168,85,247,.15), transparent 60%),
+    linear-gradient(160deg,var(--mb-1),var(--mb-2) 55%,var(--mb-3));
+}
+body.light::before{
+  background:
+    radial-gradient(40% 44% at 12% 6%, rgba(49,230,166,.35), transparent 62%),
+    radial-gradient(44% 48% at 88% 2%, rgba(108,140,255,.35), transparent 62%),
+    radial-gradient(50% 50% at 80% 94%, rgba(56,189,248,.28), transparent 60%),
+    linear-gradient(160deg,var(--mb-1),var(--mb-2) 55%,var(--mb-3));
+}
+*::selection{ background:rgba(49,230,166,.32); }
+::-webkit-scrollbar-thumb{ background:linear-gradient(180deg,var(--mb-accent),var(--mb-accent2)); border-radius:4px; }
+button:focus-visible,input:focus-visible,select:focus-visible{ outline:2px solid var(--mb-accent); outline-offset:2px; }
+
+/* ===== כותרת ===== */
+header{
+  background:var(--mb-glass); color:var(--mb-text);
+  -webkit-backdrop-filter:blur(20px) saturate(160%); backdrop-filter:blur(20px) saturate(160%);
+  border-bottom:1px solid var(--mb-stroke); box-shadow:none;
+}
+header .ava{ background:var(--mb-glass2); box-shadow:inset 0 0 0 1px var(--mb-stroke); }
+header .back:hover,header .hic:hover,header .themebtn:hover{ background:var(--mb-glass2); }
+
+/* ===== הודעות ===== */
+#msgs{ background-image:none; background-color:transparent; }
+body.light #msgs{ background-image:none; }
+.bubble{ border-radius:18px; box-shadow:0 2px 12px rgba(0,0,0,.22); }
+.msgrow.in .bubble{
+  background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text);
+  -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+}
+.msgrow.me .bubble{
+  background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent3));
+  color:#04160f; border:none; box-shadow:var(--mb-glow);
+}
+.msgrow.me .bubble::before,.msgrow.in .bubble::before{ display:none; }
+body.light .msgrow.in .bubble{ background:var(--mb-glass); }
+.dot{ color:var(--mb-accent); }
+.msgrow.me .dot{ color:#04160f; opacity:.65; }
+.dot.gray{ color:var(--mb-muted); }
+.quote{ background:rgba(0,0,0,.18); border-inline-start:4px solid var(--mb-accent2); }
+body.light .quote{ background:rgba(15,23,42,.06); }
+.rxns span{ background:var(--mb-glass2); border:1px solid var(--mb-stroke); }
+.bubble code{ background:rgba(0,0,0,.28); }
+
+/* ===== שורת קלט ===== */
+#pill{
+  background:var(--mb-glass); border:1px solid var(--mb-stroke); border-radius:26px; box-shadow:none;
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+}
+#inp{ color:var(--mb-text); }
+#sendbtn{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent3)); color:#04160f; box-shadow:var(--mb-glow); }
+#micbtn{ color:var(--mb-accent); }
+#typing{ color:var(--mb-muted); }
+
+/* ===== בארים ===== */
+#pinbar,#replybar{
+  background:var(--mb-glass); border:1px solid var(--mb-stroke); border-radius:14px; box-shadow:none;
+  -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+}
+#pinbar{ border-inline-start:3px solid var(--mb-accent); }
+#replybar{ border-inline-start:3px solid var(--mb-accent2); }
+#searchbar input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); }
+
+/* ===== תפריטים / חלוניות ===== */
+#msgmenu{
+  background:var(--wa-sheet); border:1px solid var(--mb-stroke); border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.55);
+  -webkit-backdrop-filter:blur(22px) saturate(150%); backdrop-filter:blur(22px) saturate(150%);
+}
+#msgmenu button{ background:var(--mb-glass); border-radius:12px; }
+#msgmenu button:hover{ background:var(--mb-glass2); }
+#fwddlg .box{
+  background:var(--wa-sheet); border-radius:24px 24px 0 0; border-top:1px solid var(--mb-stroke);
+  -webkit-backdrop-filter:blur(22px); backdrop-filter:blur(22px);
+}
+#fwddlg .frow:hover{ background:var(--mb-glass); }
+.scrim{ background:rgba(3,6,14,.5); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px); }
+.sheet{
+  background:var(--wa-sheet); border-inline-start:1px solid var(--mb-stroke);
+  box-shadow:-20px 0 60px rgba(0,0,0,.45);
+  -webkit-backdrop-filter:blur(24px) saturate(150%); backdrop-filter:blur(24px) saturate(150%);
+}
+
+/* ===== רשימות / כפתורים ===== */
+.mrow:hover,.roomrow:hover,.roomrow.cur,.srow:hover,.tile:hover,.tile:active,#hometabs button:hover,#setlist .row:hover{ background:var(--mb-glass); }
+.tabs button{ background:var(--mb-glass); border:1px solid var(--mb-stroke); }
+.tabs button.on{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-color:transparent; }
+.btn{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; box-shadow:var(--mb-glow); }
+.btn.ghost{ background:var(--mb-glass); color:var(--mb-text); border:1px solid var(--mb-stroke); }
+.btn.danger{ background:linear-gradient(135deg,#ff5d7a,#ff8a5b); color:#1a0510; }
+#setlist .row{ border-bottom:1px solid var(--wa-divider); }
+#setlist .sec{ color:var(--mb-accent); }
+#setlist .tgl{ background:rgba(255,255,255,.14); }
+#setlist .tgl.on{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); }
+#setlist select,#setlist input[type=text],#msearch,#roomadd input,#noteadd input,#stpost input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+.roomrow.cur{ border-radius:14px; }
+#invitebtn,.noteitem button,.roomx button{ color:var(--mb-text); }
+
+/* ===== מסך בית ===== */
+#home{ background:transparent; }
+body.light #home{ background:transparent; }
+#home header{ background:var(--mb-glass); }
+#hometabs button.on{ color:var(--mb-accent); border-bottom-color:transparent; }
+#hometabs button.on::after{ background:linear-gradient(90deg,var(--mb-accent),var(--mb-accent2)); }
+body.light #hometabs button.on{ color:var(--mb-accent); }
+#homesearch input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+.tile .inf{ border-bottom:1px solid var(--mb-stroke); }
+.tile .inf b,body.light .tile .inf b{ color:var(--mb-text); }
+.tile .ubadge{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; box-shadow:0 2px 10px rgba(49,230,166,.4); }
+#fab{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-radius:20px; box-shadow:var(--mb-glow); }
+#gotop{ background:var(--mb-glass); color:var(--mb-text); border:1px solid var(--mb-stroke); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+#dlbanner a,#chbanner a,#galbanner a{ background:var(--mb-glass); color:var(--mb-text); border:1px solid var(--mb-stroke); border-radius:16px; }
+body.light #dlbanner a,body.light #chbanner a,body.light #galbanner a{ background:var(--mb-glass); color:var(--mb-text); }
+#fabsheet .sheet{ background:var(--wa-sheet); -webkit-backdrop-filter:blur(24px); backdrop-filter:blur(24px); }
+#fabsheet .fic2{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; }
+
+/* ===== מסך כניסה ===== */
+#join{ background:transparent; }
+#join::before{ background:linear-gradient(180deg,rgba(49,230,166,.22),transparent 70%); }
+#join .card{
+  background:var(--wa-sheet); border:1px solid var(--mb-stroke); border-radius:26px;
+  box-shadow:0 30px 80px rgba(0,0,0,.5); margin-top:40px;
+  -webkit-backdrop-filter:blur(24px) saturate(150%); backdrop-filter:blur(24px) saturate(150%);
+}
+#join input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); border-radius:16px; color:var(--mb-text); }
+#join button.go{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-radius:18px; box-shadow:var(--mb-glow); }
+#join .dl{ color:var(--mb-accent); }
+#join .wimg{ border-color:var(--mb-stroke2); }
+#join h2{ color:var(--mb-text); }
+
+/* ===== שיחות / נעילה / סטטוס ===== */
+#call,#pcall{ background:linear-gradient(160deg,var(--mb-1),var(--mb-3)); }
+#call .cava,#pcall .cava{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; box-shadow:0 0 0 8px rgba(49,230,166,.14),var(--mb-glow); }
+#call .cbtns button,#pcall .cbtns button{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+#lock .card{ background:var(--wa-sheet); border:1px solid var(--mb-stroke); border-radius:22px; -webkit-backdrop-filter:blur(22px); backdrop-filter:blur(22px); }
+#lock input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+#lock button{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; }
+#stview{ background:rgba(3,6,14,.92); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+#stview .stbody{ border:1px solid var(--mb-stroke); }
+.srow .ava{ border:2px solid var(--mb-accent); }
+
+/* ===== 🔊 התראות באפליקציה (Toasts) ===== */
+#toasts{
+  position:fixed; left:0; right:0; bottom:calc(86px + env(safe-area-inset-bottom)); z-index:80;
+  display:flex; flex-direction:column; align-items:center; gap:10px; padding:0 14px; pointer-events:none;
+}
+.toast{
+  pointer-events:auto; width:min(92vw,440px); display:flex; gap:12px; align-items:center;
+  padding:12px 14px; border-radius:18px; background:var(--wa-sheet); border:1px solid var(--mb-stroke);
+  box-shadow:0 18px 50px rgba(0,0,0,.5); cursor:pointer;
+  -webkit-backdrop-filter:blur(22px) saturate(150%); backdrop-filter:blur(22px) saturate(150%);
+  animation:mbToast .32s cubic-bezier(.2,.9,.3,1.2);
+}
+.toast.hide{ animation:mbToastOut .25s ease forwards; }
+.toast .tica{
+  width:42px; height:42px; min-width:42px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+  font-size:20px; background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f;
+}
+.toast .tbody{ flex-grow:1; min-width:0; }
+.toast .tbody b{ display:block; font-size:14.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.toast .tbody span{ display:block; font-size:13px; color:var(--mb-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+@keyframes mbToast{ from{ opacity:0; transform:translateY(26px) scale(.95); } to{ opacity:1; transform:none; } }
+@keyframes mbToastOut{ to{ opacity:0; transform:translateY(14px) scale(.97); } }
+
+@media (max-width:480px){ #toasts{ bottom:calc(80px + env(safe-area-inset-bottom)); } }
+@media (prefers-reduced-motion:reduce){ .toast,.toast.hide{ animation:none; } }
+</style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -660,6 +862,7 @@ header .hic .ic{ width:23px; height:23px; }
     <a class="dl" href="https://whatsapp.com/channel/0029Vb8quoG7Noa0OoPO281B">📢 ערוץ עדכוני מולטי בוט</a>
   </div>
 </div>
+<div id="toasts"></div>
 <script>
 (function(){
   const $ = (id) => document.getElementById(id);
@@ -675,7 +878,7 @@ header .hic .ic{ width:23px; height:23px; }
   const PHOTOS = ['assets/user.png','assets/user_2.png','assets/user_3.png','assets/user_4.png','assets/user_5.png'];
   const photoFor = (n) => { let h = 0; for (const c of String(n)) h = (h * 31 + c.codePointAt(0)) % 997; return PHOTOS[h % PHOTOS.length]; };
   // ===== הגדרות =====
-  const DEF = { presence:'all', avatar:'photo', about:'', receipts:true, exp:0, blocked:[], pin:'', deviceLock:false, enterSend:true, font:'m', wallpaper:'dots', sound:true, preview:true, desktop:false };
+  const DEF = { presence:'all', avatar:'photo', about:'', receipts:true, exp:0, blocked:[], pin:'', deviceLock:false, enterSend:true, font:'m', wallpaper:'dots', sound:true, preview:true, desktop:false, toasts:true };
   let S = Object.assign({}, DEF);
   try { Object.assign(S, JSON.parse(localStorage.getItem('mb-set') || '{}')); } catch {}
   if (!Array.isArray(S.blocked)) S.blocked = [];
@@ -732,6 +935,26 @@ header .hic .ic{ width:23px; height:23px; }
       if (Notification.permission === 'granted') new Notification(title, { body: String(body).slice(0, 100) });
     } catch {}
   }
+  // ===== 🔔 התראות באפליקציה (toast) =====
+  function toast(title, body, opts){
+    if (!S.toasts) return;
+    const wrap = document.getElementById('toasts');
+    if (!wrap) return;
+    const o = opts || {};
+    const el = document.createElement('div');
+    el.className = 'toast';
+    const icon = o.avatar ? `<img class="pava" src="${esc(o.avatar)}" onerror="this.style.display='none'">`
+      : `<div class="tica">${o.icon || '🤖'}</div>`;
+    el.innerHTML = `${icon}<div class="tbody"><b></b><span></span></div>`;
+    el.querySelector('b').textContent = title || '';
+    el.querySelector('span').textContent = String(body || '').slice(0, 120);
+    let gone = false;
+    const close = () => { if (gone) return; gone = true; el.classList.add('hide'); setTimeout(() => el.remove(), 260); };
+    el.onclick = () => { try { if (o.room && o.room !== curRoom) openRoom(o.room); } catch {} close(); };
+    wrap.appendChild(el);
+    while (wrap.children.length > 3) wrap.firstChild.remove();
+    setTimeout(close, Number(o.ms) || 4200);
+  }
   let titleT = null;
   function flashTitle(){
     if (!S.preview) return;
@@ -782,7 +1005,21 @@ header .hic .ic{ width:23px; height:23px; }
     msgs.scrollTop = msgs.scrollHeight;
     let n = 0;
     while (msgs.querySelectorAll('.msgrow').length > 200) { const f = msgs.querySelector('.msgrow'); if (!f) break; f.remove(); if (++n > 300) break; }
-    if (!mine && m.from !== me && document.hidden !== undefined) { beep(); flashTitle(); notifyDesktop('מולטי בוט: ' + m.from, m.text); }
+    if (!mine && m.from !== me) {
+      beep();
+      flashTitle();
+      notifyDesktop('מולטי בוט: ' + m.from, m.text);
+      const away = document.hidden || (m.room && m.room !== curRoom);
+      if (away) {
+        const u = lastUsers.find((x) => x.name === m.from);
+        const av = (u && u.avatar && String(u.avatar).startsWith('/')) ? u.avatar : '';
+        const k = m.media && m.media.kind;
+        if (k === 'image') toast(m.from, '🖼️ תמונה חדשה', { room: m.room, avatar: av, icon: '🖼️' });
+        else if (k === 'audio') toast(m.from, '🎤 הודעה קולית', { room: m.room, avatar: av, icon: '🎤' });
+        else if (k === 'video') toast(m.from, '🎬 סרטון חדש', { room: m.room, avatar: av, icon: '🎬' });
+        else toast(m.from, m.text || '📎 קובץ', { room: m.room, avatar: av, icon: isBot(m.from) ? '🤖' : '💬' });
+      }
+    }
     if (call && isBot(m.from)) speakBot(m.text);
     if (m.room && m.room !== curRoom) bumpUnread(m.room);
   }
@@ -1988,6 +2225,7 @@ header .hic .ic{ width:23px; height:23px; }
       `<div class="sec">📊 אחסון ונתונים</div><div id="storstats" style="font-size:13px;color:var(--muted)">מחשב...</div>` +
       naRow('הורדת מדיה אוטומטית') + naRow('שימוש בפחות נתונים לשיחות') +
       `<div class="sec">🔔 התראות</div>` +
+      tglRow('התראות באפליקציה (טוסט)', 'חלונית קופצת על הודעה חדשה', 'toasts') +
       tglRow('צליל בהודעה חדשה', '', 'sound') +
       tglRow('תצוגה מקדימה (כותרת מהבהבת)', '', 'preview') +
       tglRow('התראת מערכת', 'דורש אישור דפדפן', 'desktop') +

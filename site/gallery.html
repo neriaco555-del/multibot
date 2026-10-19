@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<meta name="theme-color" content="#00a884">
+<meta name="theme-color" content="#070b16">
 <meta name="description" content="גלריית התוצרים של מולטי בוט — תמונות, סטיקרים, אתרים, מוזיקה, וידאו ועוד">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖼️</text></svg>">
 <title>גלריית התוצרים 🖼️ · מולטי בוט</title>
@@ -78,6 +78,72 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
   #grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
   .card img.prev{height:160px}
 }
+</style>
+<style id="gal-glass">
+/* ===== 🎨 גלריית מולטי בוט — עיצוב זכוכית כהה (Dark Glassmorphism) ===== */
+:root{
+  --mb-1:#070b16; --mb-2:#0c1324; --mb-3:#141c33;
+  --mb-glass:rgba(255,255,255,.055); --mb-glass2:rgba(255,255,255,.09);
+  --mb-stroke:rgba(255,255,255,.10); --mb-text:#eaf1fb; --mb-muted:rgba(234,241,251,.6);
+  --mb-accent:#31e6a6; --mb-accent2:#6c8cff; --mb-accent3:#38bdf8;
+  --green:#31e6a6; --green-d:#0f9d78;
+  --bg:#070b16; --panel:rgba(255,255,255,.05); --card:rgba(255,255,255,.05);
+  --hover:rgba(255,255,255,.09); --txt:var(--mb-text); --muted:var(--mb-muted);
+  --divider:rgba(255,255,255,.08); --radius:18px;
+}
+body.light{
+  --bg:#eef2fb; --panel:rgba(255,255,255,.7); --card:rgba(255,255,255,.72); --hover:rgba(15,23,42,.06);
+  --txt:#0f1a2e; --muted:rgba(15,26,46,.6); --divider:rgba(15,23,42,.08);
+}
+body{ background:var(--mb-1); color:var(--mb-text); }
+body::before{
+  content:''; position:fixed; inset:-20%; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(38% 42% at 12% 4%, rgba(49,230,166,.20), transparent 62%),
+    radial-gradient(42% 46% at 88% 0%, rgba(108,140,255,.24), transparent 62%),
+    radial-gradient(50% 50% at 80% 96%, rgba(56,189,248,.16), transparent 60%),
+    radial-gradient(46% 46% at 6% 92%, rgba(168,85,247,.15), transparent 60%),
+    linear-gradient(160deg,var(--mb-1),var(--mb-2) 55%,var(--mb-3));
+}
+body.light::before{
+  background:
+    radial-gradient(40% 44% at 12% 4%, rgba(49,230,166,.35), transparent 62%),
+    radial-gradient(44% 48% at 88% 0%, rgba(108,140,255,.35), transparent 62%),
+    radial-gradient(50% 50% at 80% 96%, rgba(56,189,248,.28), transparent 60%),
+    linear-gradient(160deg,var(--mb-1),var(--mb-2) 55%,var(--mb-3));
+}
+*::selection{ background:rgba(49,230,166,.32); }
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-thumb{ background:linear-gradient(180deg,var(--mb-accent),var(--mb-accent2)); border-radius:4px; }
+button:focus-visible,a:focus-visible,input:focus-visible{ outline:2px solid var(--mb-accent); outline-offset:2px; }
+header.top{
+  background:rgba(11,17,32,.6); border-bottom:1px solid var(--mb-stroke); box-shadow:none;
+  -webkit-backdrop-filter:blur(20px) saturate(160%); backdrop-filter:blur(20px) saturate(160%);
+}
+body.light header.top{ background:rgba(255,255,255,.65); }
+.logo{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; box-shadow:0 8px 30px rgba(49,230,166,.3); }
+.btn{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+.btn.primary{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-color:transparent; box-shadow:0 8px 30px rgba(49,230,166,.25); }
+.stat,.card{
+  background:var(--mb-glass); border:1px solid var(--mb-stroke);
+  -webkit-backdrop-filter:blur(14px) saturate(150%); backdrop-filter:blur(14px) saturate(150%);
+}
+.stat b{ color:var(--mb-accent); }
+.search input{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+.search input:focus{ outline:2px solid var(--mb-accent); }
+.chip{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+.chip.on{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-color:transparent; }
+.card{ transition:transform .18s, box-shadow .18s; }
+.card:hover{ transform:translateY(-3px); box-shadow:0 18px 50px rgba(0,0,0,.45); }
+.badge{ background:rgba(49,230,166,.15); color:var(--mb-accent); }
+body.light .badge{ background:rgba(49,230,166,.18); }
+.badge.site{ background:rgba(108,140,255,.18); color:#9db0ff; }
+.badge.tg{ background:rgba(56,189,248,.18); color:#7dd3fc; }
+.actions a,.actions button{ background:var(--mb-glass); border:1px solid var(--mb-stroke); color:var(--mb-text); }
+.actions a.open{ background:linear-gradient(135deg,var(--mb-accent),var(--mb-accent2)); color:#04160f; border-color:transparent; }
+.sitethumb{ background:linear-gradient(135deg,rgba(49,230,166,.18),rgba(108,140,255,.18)); }
+#light{ background:rgba(3,6,14,.92); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+#light img{ border:1px solid var(--mb-stroke); box-shadow:0 30px 80px rgba(0,0,0,.6); }
 </style>
 </head>
 <body>

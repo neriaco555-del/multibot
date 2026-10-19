@@ -194,6 +194,8 @@ function fmtTime(iso) {
 }
 
 /* ---------- טווח שבת ירושלים (Hebcal, עם גיבוי סולארי מקומי) ---------- */
+// 🕯️ הבוט נכבה חצי שעה לפני הדלקת נרות (כדי להספיק לשלוח תמונת זמנים ולהיסגר בנחת)
+export const SHABBAT_EARLY_MIN = 30;
 const JLM = { lat: 31.768, lon: 35.213 };
 const shabbatCache = { at: 0, start: 0, end: 0, src: '' };
 function ilNow() { return new Date(); }
@@ -262,13 +264,18 @@ function solarShabbatRange(now) {
   sat.setDate(friday.getDate() + 1);
   const satSun = sunTime(sat, true);
   if (!friSun || !satSun) return null;
+  // הדלקת נרות ירושלים ≈ 40 דקות לפני שקיעה; הבוט נכבה 30 דקות לפני כן
+  const candlesApprox = friSun.getTime() - 40 * 60000;
   return {
-    start: friSun.getTime() - 50 * 60000, // הדלקה 40 דקות לפני שקיעה + 10 דקות חומרה
+    start: candlesApprox - SHABBAT_EARLY_MIN * 60000, // כיבוי בוט: חצי שעה לפני הדלקה
     end: satSun.getTime() + 60 * 60000, // הבדלה ~45 דקות אחרי שקיעה + 15 דקות חומרה
+    candlesAt: candlesApprox,
+    offAt: candlesApprox - SHABBAT_EARLY_MIN * 60000,
     src: 'solar',
   };
 }
-/** טווח השבת הקרובה/נוכחית בירושלים: {start, end, src} או null */
+/** טווח השבת הקרובה/נוכחית בירושלים: {start, end, candlesAt, offAt, src} או null
+ *  start/offAt = כיבוי הבוט (חצי שעה לפני הדלקת נרות), candlesAt = הדלקה בפועל */
 export async function getShabbatRange() {
   const now = Date.now();
   if (shabbatCache.start && shabbatCache.end && now - shabbatCache.at < 12 * 3600 * 1000 && now < shabbatCache.end + 3600000) {
@@ -284,9 +291,12 @@ export async function getShabbatRange() {
       for (const c of candles) {
         const h = items.find((i) => i.category === 'havdalah' && i.t > c.t);
         if (h) {
+          const offAt = c.t - SHABBAT_EARLY_MIN * 60000; // 🕯️ כיבוי חצי שעה לפני הדלקה
           shabbatCache.at = now;
-          shabbatCache.start = c.t;
+          shabbatCache.start = offAt;
           shabbatCache.end = h.t;
+          shabbatCache.candlesAt = c.t;
+          shabbatCache.offAt = offAt;
           shabbatCache.src = 'hebcal';
           if (now < h.t + 3600000) return shabbatCache;
         }
@@ -300,6 +310,8 @@ export async function getShabbatRange() {
       shabbatCache.at = now;
       shabbatCache.start = r.start;
       shabbatCache.end = r.end;
+      shabbatCache.candlesAt = r.candlesAt || r.start;
+      shabbatCache.offAt = r.offAt || r.start;
       shabbatCache.src = r.src;
       return shabbatCache;
     }
@@ -331,6 +343,54 @@ export async function shabbatTimes(city = 'ירושלים') {
     out += `\n🎉 חג קרוב: *${holiday.hebrew || holiday.title}* (${hd.getDate()}.${hd.getMonth() + 1})\n`;
   }
   return out.trim();
+}
+
+/* ---------- זמני שבת מקוצרים לערים נבחרות (לתמונת AI + כיתוב) ---------- */
+export const SHABBAT_CITIES = ['ירושלים', 'תל אביב', 'חיפה', 'באר שבע'];
+function fmtTimeShort(iso) {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch { return ''; }
+}
+/** מחזיר [{city, candles, havdalah, parsha}] — לא זורק, מדלג על עיר שנכשלה */
+export async function getShabbatCitiesTimes(cities = SHABBAT_CITIES) {
+  const out = [];
+  await Promise.all((cities || []).map(async (city) => {
+    try {
+      const geo = SHABBAT_GEO[city];
+      if (!geo) return;
+      const geoQs = typeof geo === 'number'
+        ? `geonameid=${geo}`
+        : `latitude=${geo.lat}&longitude=${geo.lon}&tzid=Asia/Jerusalem`;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const res = await fetch(`https://www.hebcal.com/shabbat?cfg=json&${geoQs}&m=on`, { headers: { 'User-Agent': UA }, signal: ctrl.signal });
+        if (!res.ok) return;
+        const j = await res.json();
+        const items = j.items || [];
+        const candles = items.find((i) => i.category === 'candles');
+        const havdalah = items.find((i) => i.category === 'havdalah');
+        const parsha = items.find((i) => i.category === 'parashat');
+        if (!candles && !havdalah) return;
+        out.push({
+          city,
+          candles: candles ? fmtTimeShort(candles.date) : '',
+          candlesFull: candles ? fmtTime(candles.date) : '',
+          havdalah: havdalah ? fmtTimeShort(havdalah.date) : '',
+          havdalahFull: havdalah ? fmtTime(havdalah.date) : '',
+          parsha: parsha ? (parsha.hebrew || parsha.title || '') : '',
+        });
+      } finally {
+        clearTimeout(t);
+      }
+    } catch {}
+  }));
+  // סדר לפי רשימת הערים המקורית
+  out.sort((a, b) => (cities || []).indexOf(a.city) - (cities || []).indexOf(b.city));
+  return out;
 }
 
 /* ---------- מחירי מניות (Yahoo, חינמי, בלי מפתח) ---------- */

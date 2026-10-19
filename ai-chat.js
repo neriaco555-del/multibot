@@ -17,7 +17,7 @@ const SYSTEM_PROMPT =
   'יצירת סרטוני AI אינה זמינה כרגע — אם מבקשים, הצע חיפוש !וידאו במקום. ' +
   'אם מבקשים ליצור משהו כזה — אל תגיד שאין לך אפשרות! הפנה בקצרה לפקודה המתאימה עם דוגמה.';
 
-async function chatOpenAI(prompt, history = []) {
+async function chatOpenAI(prompt, history = [], opts = {}) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -32,7 +32,7 @@ async function chatOpenAI(prompt, history = []) {
         { role: 'user', content: prompt },
       ],
       max_tokens: 1000,
-      temperature: 0.7,
+      temperature: opts.temperature ?? 0.7,
     }),
   });
   if (!res.ok) throw new Error(`OpenAI ${res.status}`);
@@ -42,7 +42,7 @@ async function chatOpenAI(prompt, history = []) {
   return { text, provider: `OpenAI ${config.OPENAI_MODEL}` };
 }
 
-async function chatGroq(prompt, history = [], models = null, maxTokens = 4000) {
+async function chatGroq(prompt, history = [], models = null, maxTokens = 4000, opts = {}) {
   // qwen קודם (מהיר, עוקב הוראות, עברית טובה) — gpt-oss איטי ושורף טוקני חשיבה
   const list = (models && models.length ? models : ['qwen/qwen3.8-27b', config.GROQ_MODEL]).filter((v, i, a) => v && a.indexOf(v) === i);
   let lastErr = null;
@@ -62,7 +62,7 @@ async function chatGroq(prompt, history = [], models = null, maxTokens = 4000) {
             { role: 'user', content: prompt },
           ],
           max_tokens: maxTokens,
-          temperature: 0.7,
+          temperature: opts.temperature ?? 0.7,
         }),
       });
       if (!res.ok) throw new Error(`Groq ${model} ${res.status}`);
@@ -77,7 +77,7 @@ async function chatGroq(prompt, history = [], models = null, maxTokens = 4000) {
   throw lastErr || new Error('Groq failed');
 }
 
-async function chatGemini(prompt, maxTokens = 1000) {
+async function chatGemini(prompt, maxTokens = 1000, opts = {}) {
   // REST ישיר בלי SDK — פחות תלויות. עם גיבוי דגמים + ניסיון חוזר על 503.
   const models = [config.GEMINI_MODEL, 'gemini-3.7-flash', 'gemini-3.6-flash'].filter((v, i, a) => v && a.indexOf(v) === i);
   let lastErr = null;
@@ -93,7 +93,7 @@ async function chatGemini(prompt, maxTokens = 1000) {
           body: JSON.stringify({
             system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 },
+            generationConfig: { maxOutputTokens: maxTokens, temperature: opts.temperature ?? 0.3 },
           }),
         });
         if (!res.ok) throw new Error(`Gemini ${model} ${res.status}`);
@@ -110,7 +110,7 @@ async function chatGemini(prompt, maxTokens = 1000) {
   throw lastErr || new Error('Gemini failed');
 }
 
-async function chatPollinations(prompt) {
+async function chatPollinations(prompt, opts = {}) {
   // OpenAI-compatible, חינמי, בלי מפתח
   const res = await fetch('https://text.pollinations.ai/openai', {
     method: 'POST',
@@ -122,7 +122,7 @@ async function chatPollinations(prompt) {
         { role: 'user', content: prompt.slice(0, 2000) },
       ],
       max_tokens: 1000,
-      temperature: 0.7,
+      temperature: opts.temperature ?? 0.7,
     }),
   });
   if (!res.ok) throw new Error(`Pollinations ${res.status}`);
@@ -133,7 +133,7 @@ async function chatPollinations(prompt) {
 }
 
 /** פונקציה ראשית — מנסה כל provider לפי הסדר, מחזירה {text, provider} */
-export async function chatAI(prompt, history = []) {
+export async function chatAI(prompt, history = [], opts = {}) {
   const clean = (prompt || '').toString().trim().slice(0, 2000);
   if (!clean) return { text: 'שלח לי שאלה או בקשה 😊', provider: 'none' };
 
@@ -141,28 +141,28 @@ export async function chatAI(prompt, history = []) {
 
   if (config.OPENAI_API_KEY) {
     try {
-      return await chatOpenAI(clean, history);
+      return await chatOpenAI(clean, history, opts);
     } catch (e) {
       errors.push(`OpenAI: ${e.message}`);
     }
   }
   if (config.GROQ_API_KEY) {
     try {
-      return await chatGroq(clean, history);
+      return await chatGroq(clean, history, null, 4000, opts);
     } catch (e) {
       errors.push(`Groq: ${e.message}`);
     }
   }
   if (config.GEMINI_API_KEY) {
     try {
-      return await chatGemini(clean);
+      return await chatGemini(clean, 1000, opts);
     } catch (e) {
       errors.push(`Gemini: ${e.message}`);
     }
   }
   // תמיד יש fallback חינמי
   try {
-    return await chatPollinations(clean);
+    return await chatPollinations(clean, opts);
   } catch (e) {
     errors.push(`Pollinations: ${e.message}`);
   }
