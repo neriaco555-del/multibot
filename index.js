@@ -117,7 +117,7 @@ Suno יוצר שיר אמיתי עם שירה 🎤 (נדרש חיבור חד-פ�
 
 🎬 *${config.BOT_PREFIX}סרט <שם> — הורדת סרטון*
 מחזיר 5 אפשרויות; כותבים מספר 1-5 והבוט מוריד רק את הנבחר (עד ~100MB).
-מעל ~2MB הבוט דוחס אוטומטית כדי לשלוח בוואטסאפ; מעל ~5MB נשלח גם קישור לאיכות מלאה.
+הבוט שולח באיכות מלאה. רק אם וואטסאפ דוחה את הקובץ — הוא דוחס ל~2MB וגם נותן קישור לאיכות מלאה.
 🔗 אפשר גם לשלוח קישור ישיר (עמוד/קובץ וידאו מהאתר) — הבוט יוריד אותו.
 
 ━━━━━━━━━━━━━━
@@ -1384,43 +1384,44 @@ async function deliverMovieFile(sock, remoteJid, buffer, title, prog, mime = 'vi
 
 /** קטן — שולחים ישירות; גדול — מעלים ל-Litterbox ושולחים קישור (תקף 72 שעות). */
 async function deliverMovieResult(sock, remoteJid, buffer, title, prog, mime = 'video/mp4') {
-  const DIRECT_MAX = 2 * 1024 * 1024; // WhatsApp media upload נכשל בקבצים גדולים — קטן עובר
-  const LINK_THRESHOLD = (Number(config.MOVIE_WA_SEND_MB) || 5) * 1024 * 1024;
+  const DIRECT_MAX = (Number(config.MOVIE_MAX_MB) || 100) * 1024 * 1024;
   const mb = Math.round((buffer.length / 1048576) * 10) / 10;
   const safeName = String(title || 'video').replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'video';
-  let delivered = false;
+  let fullDelivered = false;
+  let compressedDelivered = false;
+  let linkDelivered = false;
   let lastErr = null;
 
-  // 1) קובץ קטן — שליחה ישירה
+  // 1) קודם כל — לנסות לשלוח את הסרטון המקורי באיכות מלאה (וידאו, ואם נדרש — מסמך)
   if (buffer.length <= DIRECT_MAX) {
     try {
       await deliverMovieFile(sock, remoteJid, buffer, title, prog, mime);
-      delivered = true;
+      fullDelivered = true;
     } catch (e) {
       lastErr = e;
-      console.warn('🎬 direct send fail:', String((e && e.message) || '').slice(0, 140));
+      console.warn('🎬 full send fail:', String((e && e.message) || '').slice(0, 140));
     }
   }
 
-  // 2) קובץ גדול — דחיסה ל~2MB ושליחה (כדי שיהיה סרטון בוואטסאפ, לא רק קישור)
-  if (!delivered) {
+  // 2) רק אם השליחה המלאה נכשלה — דחיסה ל~2MB כדי שתהיה לפחות גרסה בוואטסאפ
+  if (!fullDelivered) {
     try {
       await sock.sendMessage(remoteJid, { text:
-        `🗜️ מכווץ את הווידאו כדי שיישלח בוואטסאפ (${mb}MB → ~2MB)...` }).catch(() => {});
+        `🗜️ וואטסאפ דחה את הקובץ המלא (${mb}MB) — מכווץ ל~2MB...` }).catch(() => {});
       const c = await compressVideoForWhatsApp(buffer, 2);
       await deliverMovieFile(sock, remoteJid, c.buffer, `🗜️ ${String(title || '').slice(0, 140)}`, prog, c.mime || 'video/mp4');
-      delivered = true;
+      compressedDelivered = true;
     } catch (e) {
       lastErr = e;
       console.warn('🎬 compress/send fail:', String((e && e.message) || '').slice(0, 160));
     }
   }
 
-  // 3) קובץ מקורי גדול — בנוסף, קישור לאיכות מלאה
-  if (buffer.length > LINK_THRESHOLD) {
+  // 3) אם לא הצלחנו לשלוח את המלא — קישור לאיכות מלאה
+  if (!fullDelivered) {
     try {
       await sock.sendMessage(remoteJid, { text:
-        `☁️ מעלה גם קישור לאיכות מלאה (${mb}MB, תקף 72 שעות)...` }).catch(() => {});
+        `☁️ מעלה קישור לאיכות מלאה (${mb}MB, תקף 72 שעות)...` }).catch(() => {});
       let url = '';
       try {
         url = await uploadToLitterbox(buffer, `${safeName}.mp4`, '72h');
@@ -1429,13 +1430,14 @@ async function deliverMovieResult(sock, remoteJid, buffer, title, prog, mime = '
         url = await uploadToCatbox(buffer, `${safeName}.mp4`);
       }
       await sock.sendMessage(remoteJid, { text: `🔗 *איכות מלאה (${mb}MB):*\n${url}` });
+      linkDelivered = true;
     } catch (e) {
       console.warn('🎬 full-quality link fail:', String((e && e.message) || '').slice(0, 140));
     }
   }
 
-  if (!delivered) throw lastErr || new Error('VIDEO_SEND_FAILED');
-  if (prog?.key) { try { await sock.sendMessage(remoteJid, { delete: prog.key }); } catch {} }
+  if (!fullDelivered && !compressedDelivered && !linkDelivered) throw lastErr || new Error('VIDEO_SEND_FAILED');
+  if (fullDelivered && prog?.key) { try { await sock.sendMessage(remoteJid, { delete: prog.key }); } catch {} }
 }
 
 /** חיפוש ביוטיוב → 5 אפשרויות → שמירה לבחירה לפי מספר. */
@@ -1519,7 +1521,7 @@ async function offerMovieDownloads(sock, remoteJid, sender, q) {
     `🎬 *5 האפשרויות הכי מתאימות ל-"${query.slice(0, 60)}":*\n\n` +
     lines.join('\n\n') +
     `\n\n↩️ *כתוב מספר 1-${items.length}* כדי שאוריד רק את הנבחר.\n` +
-    `⏱️ עד 60 דקות · מעל ~2MB נדחס אוטומטית · מעל ~5MB גם קישור לאיכות מלאה · הרשימה בתוקף ל-10 דקות. לביטול — כתוב 0.` });
+    `⏱️ עד 60 דקות · נשלח באיכות מלאה; רק אם וואטסאפ דוחה — דחיסה ל~2MB + קישור · הרשימה בתוקף ל-10 דקות. לביטול — כתוב 0.` });
   lastMedia.set(remoteJid, { kind: 'video', q: query, at: Date.now() });
   return true;
 }
