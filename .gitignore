@@ -3,6 +3,8 @@ auth_info/
 auth_info*/
 .env
 gsheets-key.json
+suno-auth.json
+suno-tools.json
 # לוגים וסשנים מתים
 *.log
 qr.png
@@ -11,6 +13,9 @@ status-views.json
 my-contacts.json
 tc-session.json
 bot-store.json
+broadcast-polls.json
+video-relay.json
+video-approvals.json
 site-chat.json
 site-status.json
 site-reports.json
@@ -19,6 +24,7 @@ site-accounts.json
 tg-points.json
 tg-rota.json
 tg-users.json
+tg-blocked.json
 tg-voice.json
 tg-gallery.json
 tg-userbot.session
@@ -41,3 +47,14 @@ bot-admin-app/app/build/
 bot-admin-app/local.properties
 gallery-queue.json
 tg-i18n.json
+jobs-store.json
+# סודות/סשנים אישיים — לא להעלות לריפו ציבורי
+me-config.json
+me-sessions/
+# דאטה מקומי/פרטי
+all-chats.json
+chats-all.txt
+ads-config.json
+ads-state.json
+tag-broadcast.json
+movies.json.bak

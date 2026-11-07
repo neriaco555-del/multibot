@@ -11,8 +11,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY . .
+RUN chmod +x /app/render-start.sh
 
 # auth_info ו-.env מגיעים מבחוץ (volume) — לא בתוך האימג'
 VOLUME ["/app/auth_info"]
 
-CMD ["node", "index.js"]
+CMD ["sh", "render-start.sh"]

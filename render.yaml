@@ -1,4 +1,5 @@
 services:
+  # ------------------------- אתר הקהילה -------------------------
   - type: web
     name: multibot-chat
     runtime: node
@@ -13,7 +14,6 @@ services:
         value: production
       - key: SITE_ADMIN
         generateValue: true
-      # מפתחות AI — מוגדרים בדשבורד אחרי הדיפלוי (או דרך ה-API)
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
@@ -22,7 +22,67 @@ services:
         sync: false
       - key: HF_TOKEN
         sync: false
-      # 🖼️ גלריה: דחיפת תוצרים מהבוטים — חייב להיות זהה ל-GALLERY_SECRET ב-.env המקומי!
-      # מוסיפים ידנית בדשבורד: https://dashboard.render.com → multibot-zuk0 → Environment
       - key: GALLERY_SECRET
+        sync: false
+
+  # ------------------------- בוט וואטסאפ 24/7 -------------------------
+  # דורש תוכנית Starter + דיסק מתמשך (Render לא מאפשר worker/דיסק בחינם).
+  - type: worker
+    name: multibot-whatsapp
+    runtime: docker
+    repo: https://github.com/neriaco555-del/multibot.git
+    branch: main
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    autoDeploy: true
+    disk:
+      name: whatsapp-auth
+      mountPath: /app/auth_info
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # חיבור וואטסאפ: המספר של הבוט (ספרות בלבד). הקוד יודפס בלוגים של Render.
+      - key: PAIR_PHONE
+        sync: false
+      - key: BOT_PREFIX
+        value: "!"
+      - key: BOT_NAME
+        value: מולטי בוט
+      - key: MOVIE_GROUP
+        value: 120363413146436461@g.us
+      - key: MOVIE_MAX_MB
+        value: "100"
+      - key: MOVIE_WA_SEND_MB
+        value: "16"
+      - key: ALLOWED_GROUPS
+        value: 120363430145058453@g.us,120363412673174664@g.us,120363411454298973@g.us,120363431633639073@g.us,120363407455857266@g.us,120363413561585018@g.us,120363428924187220@g.us,120363411286522478@g.us,120363431877309680@g.us,120363413146436461@g.us,120363414267959622@g.us,120363431842287218@g.us,120363432241366504@g.us
+      - key: RELAY_PORT
+        value: "3888"
+      # --- מפתחות (ממלאים בדשבורד Render) ---
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: GALLERY_SECRET
+        sync: false
+      - key: GALLERY_SERVER_URL
+        sync: false
+      - key: GSHEETS_WEBAPP_URL
+        sync: false
+      - key: GSHEETS_SECRET
+        sync: false
+      - key: RELAY_SECRET
+        sync: false
+      - key: ADMIN_TOKEN
         sync: false

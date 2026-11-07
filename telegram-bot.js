@@ -119,6 +119,132 @@ function touchUser(ctx, cmd, count = true) {
     saveUsers();
   } catch {}
 }
+/* ---------- 🚫 חסימות (בעלים) — הבוט מתעלם מהמשתמש לחלוטין ---------- */
+const BLOCKED_FILE = new URL('./tg-blocked.json', import.meta.url);
+let blocked = {};
+try { blocked = JSON.parse(fs.readFileSync(BLOCKED_FILE, 'utf-8')) || {}; } catch {}
+let blkTimer = null;
+function saveBlocked() {
+  clearTimeout(blkTimer);
+  blkTimer = setTimeout(() => { try { fs.writeFileSync(BLOCKED_FILE, JSON.stringify(blocked)); } catch {} }, 800);
+}
+const isBlockedUid = (uid) => !!(uid != null && blocked[String(uid)]);
+function blockUser(id, by, name, username, reason) {
+  const key = String(id);
+  if (!key || key === OWNER_ID) return false;
+  blocked[key] = {
+    at: Date.now(), by: String(by || 'owner'),
+    name: String(name || key).slice(0, 40),
+    username: String(username || '').slice(0, 40),
+    reason: String(reason || '').slice(0, 120),
+  };
+  saveBlocked();
+  return true;
+}
+function unblockUser(id) {
+  const key = String(id);
+  if (!blocked[key]) return false;
+  delete blocked[key];
+  saveBlocked();
+  return true;
+}
+// מטרה מ-Reply / מספר מזהה / @שם משתמש (ע"פ טבלת המשתמשים שנרשם לבוט)
+function resolveUserTarget(msg, q) {
+  const rep = msg && msg.reply_to_message && msg.reply_to_message.from;
+  if (rep && !rep.is_bot) {
+    return {
+      id: String(rep.id),
+      name: `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.username || String(rep.id),
+      username: rep.username || '',
+      reason: String(q || '').trim(),
+    };
+  }
+  const raw = String(q || '').trim();
+  if (!raw) return { error: 'לא ציינת מטרה.\n• הגב (Reply) להודעה של המשתמש\n• /חסם 8526183047\n• /חסם @Yair0987 סיבה' };
+  const sp = raw.indexOf(' ');
+  const first = sp === -1 ? raw : raw.slice(0, sp);
+  const rest = sp === -1 ? '' : raw.slice(sp + 1).trim();
+  if (/^\d{4,}$/.test(first)) {
+    const u = users[first];
+    return { id: first, name: (u && u.name) || first, username: (u && u.username) || '', reason: rest };
+  }
+  const un = first.replace(/^@/, '').toLowerCase();
+  const hit = Object.entries(users).find(([, u]) => u && String(u.username || '').toLowerCase() === un);
+  if (hit) return { id: hit[0], name: hit[1].name || un, username: hit[1].username || '', reason: rest };
+  return { error: `לא מצאתי את "${first}".\nאפשר:\n• הגב (Reply) להודעה שלו\n•מספר מזהה: /חסם 8526183047\n• @שם משתמש שכבר פנה לבוט` };
+}
+/* ---------- 🛠️ פאנל ניהול (בעלים בלבד — לפי מזהה טלגרם) ---------- */
+const admPending = new Map(); // chatId -> { uid, msgId, at } — שליחת הודעה למשתמש דרך Reply
+const fmtAt = (t) => { try { return new Date(t).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return '—'; } };
+function upText() {
+  const ms = Date.now() - bootAt;
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return `${h} שע׳ ${m} דק׳`;
+}
+const admLabel = (id) => String((users[id] || {}).name || id).slice(0, 18);
+const admName = (id) => `${(users[id] || {}).name || id}${(users[id] || {}).username ? ' (@' + users[id].username + ')' : ''}`;
+const admHomeKb = () => new InlineKeyboardBuilder()
+  .text('🚫 חסימות', 'adm:blocks').text('👥 משתמשים', 'adm:users').row()
+  .text('📊 סטטיסטיקות', 'adm:stats').text('ℹ️ עזרה', 'adm:help').row()
+  .build();
+function admHomeText() {
+  return `🛠️ *פאנל ניהול — מולטי בוט*\n\n👥 משתמשים: ${Object.keys(users).length}\n🚫 חסומים: ${Object.keys(blocked).length}\n⏱️ פעיל: ${upText()}\n\nבחר פעולה 👇`;
+}
+async function admSend(chatId, text, markup, editMsgId) {
+  if (editMsgId) {
+    try { return await api.editMessageText({ chat_id: chatId, message_id: editMsgId, text, parse_mode: 'Markdown', reply_markup: markup }); } catch {}
+  }
+  try { return await api.sendMessage({ chat_id: chatId, text, parse_mode: 'Markdown', reply_markup: markup }); }
+  catch { return sendSafe(chatId, text.replace(/[*_`]/g, '')); }
+}
+const sendAdminPanel = (chatId, editMsgId) => admSend(chatId, admHomeText(), admHomeKb(), editMsgId);
+function admBlocksView() {
+  const ids = Object.keys(blocked).sort((a, b) => (blocked[b].at || 0) - (blocked[a].at || 0));
+  if (!ids.length) return { text: '🚫 *אין משתמשים חסומים כרגע.*', markup: new InlineKeyboardBuilder().text('⬅️ חזרה', 'adm:home').build() };
+  const kb = new InlineKeyboardBuilder();
+  ids.slice(0, 20).forEach((id) => kb.text('🔓 ' + admLabel(id), `adm:un:${id}`).row());
+  kb.text('⬅️ חזרה', 'adm:home');
+  const list = ids.slice(0, 20).map((id) => `• ${admName(id)} \`${id}\`${blocked[id].reason ? ' — ' + blocked[id].reason : ''}`).join('\n');
+  return { text: `🚫 *חסומים (${ids.length}):*\n\n${list}\n\n👇 לחץ לשחרור מיידי`, markup: kb.build() };
+}
+function admUsersView() {
+  const ids = Object.keys(users).sort((a, b) => (users[b].msgs || 0) - (users[a].msgs || 0)).slice(0, 10);
+  const kb = new InlineKeyboardBuilder();
+  ids.forEach((id) => kb.text(`${blocked[id] ? '🚫' : '👤'} ${admLabel(id)} — ${users[id].msgs || 0}`, `adm:u:${id}`).row());
+  kb.text('⬅️ חזרה', 'adm:home');
+  return { text: `👥 *משתמשים (Top 10 מתוך ${Object.keys(users).length}):*\n\n👇 לחץ לפרטים, חסימה או שליחת הודעה`, markup: kb.build() };
+}
+function admUserView(id) {
+  const u = users[id] || {};
+  const b = blocked[id];
+  const text = `👤 *${u.name || id}*` + (u.username ? ` (@${u.username})` : '') +
+    `\n🆔 \`${id}\`\n💬 הודעות: ${u.msgs || 0}\n🕐 אחרונה: ${u.last ? fmtAt(u.last) : '—'}\n📅 הצטרף: ${u.first ? fmtAt(u.first) : '—'}` +
+    (b ? `\n\n🚫 *חסום*${b.reason ? ' — ' + b.reason : ''}` : '\n\n✅ פעיל');
+  const kb = new InlineKeyboardBuilder();
+  if (b) kb.text('🔓 בטל חסימה', `adm:un:${id}`);
+  else kb.text('🚫 חסום', `adm:bn:${id}`);
+  kb.text('✉️ שלח הודעה', `adm:msg:${id}`).row();
+  kb.text('⬅️ חזרה', 'adm:users').text('🏠 תפריט', 'adm:home');
+  return { text, markup: kb.build() };
+}
+function admStatsView() {
+  const ids = Object.keys(users);
+  const total = ids.reduce((a, id) => a + (users[id].msgs || 0), 0);
+  const day = Date.now() - 86400000;
+  const active = ids.filter((id) => (users[id].last || 0) > day).length;
+  const top = [...ids].sort((a, b) => (users[b].msgs || 0) - (users[a].msgs || 0)).slice(0, 5);
+  return {
+    text: `📊 *סטטיסטיקות*\n\n👥 משתמשים: ${ids.length}\n💬 הודעות: ${total}\n🟢 פעילים (24ש׳): ${active}\n🚫 חסומים: ${Object.keys(blocked).length}\n⏱️ פעיל: ${upText()}\n\n🏆 *המובילים:*\n` +
+      (top.length ? top.map((id, i) => `${i + 1}. ${admName(id)} — ${users[id].msgs || 0}`).join('\n') : '—'),
+    markup: new InlineKeyboardBuilder().text('⬅️ חזרה', 'adm:home').build(),
+  };
+}
+function admHelpView() {
+  return {
+    text: `ℹ️ *עזרת ניהול* (בעלים בלבד)\n\n/ניהול — הפאנל הזה\n/חסם [Reply | מזהה | @שם] — חסימה\n/בטל-חסם [הנ"ל] — שחרור\n/חסומים — רשימת החסומים\n/שלח [מזהה | @שם] טקסט — שליחת הודעה למשתמש\n/סטטיסטיקה — נתונים`,
+    markup: new InlineKeyboardBuilder().text('⬅️ חזרה', 'adm:home').build(),
+  };
+}
 /* ---------- 📣 פרסום + דיפ-לינקים ---------- */
 const TG_LINK = 'https://t.me/multibot_xxx_bot';
 const START_ROUTES = {
@@ -668,7 +794,6 @@ async function showGallery(chatId, uid) {
 /* 🎨 שליחת תמונה עם כפתורי פעולה (משותף לפקודה ולכפתור "אפשרות אחרת") */
 async function sendImagePrompt(chatId, uid, prompt) {
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
-  await act('upload_photo');
   const iid = String(imgSeq++); imgCache.set(iid, { prompt }); trimCache(imgCache);
   const kb = new InlineKeyboardBuilder()
     .text(await t(uid, 'img_again'), `img:${iid}`).text(await t(uid, 'img_gal'), 'gal:').build();
@@ -736,6 +861,11 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
   const say = (tx, extra = {}) => sayRich(chatId, tx, extra, uid);
   const needQ = (usage) => say(usage || '❓ חסר טקסט. כתוב /עזרה.');
   const act = (a) => api.sendChatAction({ chat_id: chatId, action: a }).catch(() => {});
+  // 🔐 בדיקת בעלים: בעלים ממשיך; אחרת עם '/' → שגיאה, בלי '/' → נופל לצ'אט חופשי
+  const ownerOnly = () => {
+    if (String(uid) === OWNER_ID) return false;
+    return /^[/!]/.test(String(msg.text || '').trim()) ? say('⛔ פקודת בעלים בלבד.') : null;
+  };
 
   // 🎨 תמונה — קודם דרך בוט הוואטסאפ (0503651436) → +16508702892, נפילה לישיר
   if (['תמונה', 'צייר', 'ציור', 'תצייר', 'image', 'draw'].includes(cmd)) {
@@ -1049,8 +1179,67 @@ async function handleCommand(chatId, from, uid, cmdRaw, args, msg) {
     const top = [...ids].sort((a, b) => (users[b].msgs || 0) - (users[a].msgs || 0)).slice(0, 5);
     const upH = Math.floor((Date.now() - bootAt) / 3600000);
     const upM = Math.floor(((Date.now() - bootAt) % 3600000) / 60000);
-    return say(`📊 *סטטיסטיקות הבוט*\n\n👥 משתמשים: ${ids.length}\n💬 הודעות: ${total}\n🟢 פעילים (24 שעות): ${active}\n⏱️ זמן פעילות: ${upH} שע׳ ${upM} דק׳\n\n🏆 *הכי פעילים:*\n` +
+    return say(`📊 *סטטיסטיקות הבוט*\n\n👥 משתמשים: ${ids.length}\n💬 הודעות: ${total}\n🟢 פעילים (24 שעות): ${active}\n🚫 חסומים: ${Object.keys(blocked).length}\n⏱️ זמן פעילות: ${upH} שע׳ ${upM} דק׳\n\n🏆 *הכי פעילים:*\n` +
       (top.length ? top.map((id, i) => `${i + 1}. ${users[id].name || id}${users[id].username ? ' (@' + users[id].username + ')' : ''} — ${users[id].msgs} הודעות`).join('\n') : 'אין נתונים עדיין.'));
+  }
+  // 🚫 חסימות (בעלים בלבד) — הגב להודעה של המשתמש או תן מזהה/@username
+  if (['חסם', 'חסום', 'ban', 'block'].includes(cmd)) {
+    const _deny = ownerOnly(); if (_deny !== false) return _deny;
+    const tg = resolveUserTarget(msg, q);
+    if (tg.error) return say('🚫 ' + tg.error);
+    if (String(tg.id) === OWNER_ID) return say('🙄 אי אפשר לחסום את הבעלים.');
+    const was = blocked[tg.id] ? true : false;
+    blockUser(tg.id, 'owner', tg.name, tg.username, tg.reason);
+    let g = '';
+    if (Number(chatId) < 0) {
+      try { await api.banChatMember({ chat_id: chatId, user_id: Number(tg.id) }); g = '\n👢 גם הורחק מהקבוצה הזו.'; }
+      catch { g = '\n⚠️ לא הצלחתי להרחיק מהקבוצה (צריך לתת לבוט הרשאת מנהל).'; }
+    }
+    return say(`🚫 *נחסם:* ${tg.name}${tg.username ? ' (@' + tg.username + ')' : ''}\n🆔 \`${tg.id}\`` +
+      (tg.reason ? `\n📝 ${tg.reason}` : '') + (was ? '\n(כבר היה חסום — עודכן)' : '') + g +
+      (Number(chatId) < 0 ? '' : '\n💡 בבואו לקבוצה — הבוט יתעלם منه.\n↩ ביטול: /בטל-חסם'));
+  }
+  if (['בטל-חסם', 'בטל-חסום', 'unban', 'unblock'].includes(cmd)) {
+    const _deny = ownerOnly(); if (_deny !== false) return _deny;
+    const tg = resolveUserTarget(msg, q);
+    if (tg.error) return say('🚫 ' + tg.error);
+    if (!blocked[tg.id]) return say(`ℹ️ ${tg.name} לא היה חסום.`);
+    unblockUser(tg.id);
+    let g = '';
+    if (Number(chatId) < 0) {
+      try { await api.unbanChatMember({ chat_id: chatId, user_id: Number(tg.id), only_if_banned: true }); g = '\n✅ הוחזר לקבוצה.'; } catch {}
+    }
+    return say(`✅ *בוטלה החסימה:* ${tg.name}\n🆔 \`${tg.id}\`` + g);
+  }
+  if (['חסומים', 'רשימת-חסומים', 'blocked'].includes(cmd)) {
+    const _deny = ownerOnly(); if (_deny !== false) return _deny;
+    const ids = Object.keys(blocked);
+    if (!ids.length) return say('🚫 אין משתמשים חסומים כרגע.');
+    const rows = ids.sort((a, b) => (blocked[b].at || 0) - (blocked[a].at || 0)).slice(0, 40).map((id) => {
+      const b = blocked[id];
+      return `• ${b.name || id}${b.username ? ' (@' + b.username + ')' : ''} — \`${id}\`${b.reason ? ' — ' + b.reason : ''}`;
+    });
+    return say(`🚫 *חסומים (${ids.length}):*\n${rows.join('\n')}${ids.length > 40 ? '\n…ועוד' : ''}`);
+  }
+  // 🛠️ פאנל ניהול (בעלים בלבד) — פרטי בלבד
+  if (['ניהול', 'פאנל', 'admin', 'אדמין'].includes(cmd)) {
+    const _deny = ownerOnly(); if (_deny !== false) return _deny;
+    if (Number(chatId) < 0) return say('🛠️ הפאנל זמין רק בצ׳אט הפרטי עם הבוט.');
+    return sendAdminPanel(chatId);
+  }
+  // ✉️ שליחת הודעה למשתמש (בעלים בלבד)
+  if (['שלח', 'הודעה'].includes(cmd)) {
+    const _deny = ownerOnly(); if (_deny !== false) return _deny;
+    const tg = resolveUserTarget(msg, q);
+    if (tg.error) return say('✉️ ' + tg.error);
+    const body = String(tg.reason || '').trim();
+    if (!body) return say('✉️ כתוב גם את תוכן ההודעה.\nדוגמה: /שלח 8526183047 שלום, יש בעיה בחשבון שלך\nאו: הגב להודעה שלו וכתוב /שלח שלום');
+    const payload = { chat_id: Number(tg.id), text: body.slice(0, 3000) };
+    const okSend = await api.sendMessage({ ...payload, parse_mode: 'Markdown' }).then(() => true).catch(() => false)
+      || await api.sendMessage(payload).then(() => true).catch(() => false);
+    return say(okSend
+      ? `✉️ נשלח אל ${admName(tg.id)} (${tg.id}) ✅`
+      : `😢 לא הצלחתי לשלוח אל ${admName(tg.id)} (${tg.id}) — ייתכן שהוא לא התחיל שיחה עם הבוט.`);
   }
   // 🫢 אמת או חובה
   if (['אמת-או-חובה', 'truth'].includes(cmd)) {
@@ -1162,6 +1351,23 @@ bot.on('message', async (ctx) => {
     if (!msg || !ctx.chat || ctx.from?.is_bot) return;
     const chatId = ctx.chat.id;
     const uid = ctx.from.id;
+    if (isBlockedUid(uid)) return; // 🚫 חסום — הבוט מתעלם לחלוטין
+    // ✍️ תשובת בעלים להודעה מפאנל הניהול → שליחה למשתמש
+    if (String(uid) === OWNER_ID && admPending.has(chatId) && msg.reply_to_message) {
+      const rec = admPending.get(chatId);
+      if (rec && Date.now() - rec.at < 10 * 60 * 1000 && msg.reply_to_message.message_id === rec.msgId) {
+        admPending.delete(chatId);
+        const body = String(msg.text || '').trim();
+        if (body) {
+          const payload = { chat_id: Number(rec.uid), text: body.slice(0, 3000) };
+          const sent = await api.sendMessage({ ...payload, parse_mode: 'Markdown' }).then(() => true).catch(() => false)
+            || await api.sendMessage(payload).then(() => true).catch(() => false);
+          return sendSafe(chatId, sent
+            ? `✉️ נשלח אל ${admName(rec.uid)} ✅`
+            : `😢 לא הצלחתי לשלוח אל ${admName(rec.uid)} — ייתכן שהוא לא התחיל שיחה עם הבוט.`);
+        }
+      }
+    }
     const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
     const f = ctx.from;
     const from = `${f.first_name || ''} ${f.last_name || ''}`.trim() || f.username || 'חבר';
@@ -1278,12 +1484,63 @@ bot.on('callback_query', async (ctx) => {
   try {
     const cq = ctx.callbackQuery;
     if (!cq) return;
+    if (isBlockedUid(cq.from?.id)) return; // 🚫 חסום — מתעלם גם מכפתורים
     await ctx.answerCallbackQuery().catch(() => {});
     const data = String(cq.data || '');
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     const uid = ctx.from?.id;
     const uname = (ctx.from?.first_name || '') || ctx.from?.username || 'חבר';
+    // 🛠️ פאנל ניהול — בעלים בלבד
+    if (data.startsWith('adm:')) {
+      if (String(uid) !== OWNER_ID) return sendSafe(chatId, '⛔ פקודת בעלים בלבד.');
+      const sub = data.slice(4);
+      const msgId = cq.message?.message_id;
+      if (sub === 'home') return sendAdminPanel(chatId, msgId);
+      if (sub === 'blocks') { const v = admBlocksView(); return admSend(chatId, v.text, v.markup, msgId); }
+      if (sub === 'users') { const v = admUsersView(); return admSend(chatId, v.text, v.markup, msgId); }
+      if (sub === 'stats') { const v = admStatsView(); return admSend(chatId, v.text, v.markup, msgId); }
+      if (sub === 'help') { const v = admHelpView(); return admSend(chatId, v.text, v.markup, msgId); }
+      if (sub.startsWith('u:')) {
+        const id = sub.slice(2);
+        if (!/^\d{4,}$/.test(id)) return;
+        const v = admUserView(id);
+        return admSend(chatId, v.text, v.markup, msgId);
+      }
+      if (sub.startsWith('bn:')) {
+        const id = sub.slice(3);
+        if (!/^\d{4,}$/.test(id)) return;
+        if (String(id) === OWNER_ID) return sendSafe(chatId, '🙄 אי אפשר לחסום את הבעלים.');
+        blockUser(id, 'owner', (users[id] || {}).name, (users[id] || {}).username, '');
+        await sendSafe(chatId, `🚫 נחסם: ${admName(id)}`);
+        const v = admUserView(id);
+        return admSend(chatId, v.text, v.markup, msgId);
+      }
+      if (sub.startsWith('un:')) {
+        const id = sub.slice(3);
+        if (!/^\d{4,}$/.test(id)) return;
+        unblockUser(id);
+        await sendSafe(chatId, `🔓 שוחרר: ${admName(id)}`);
+        const v = admUserView(id);
+        return admSend(chatId, v.text, v.markup, msgId);
+      }
+      if (sub.startsWith('msg:')) {
+        const id = sub.slice(4);
+        if (!/^\d{4,}$/.test(id)) return;
+        admPending.set(chatId, { uid: id, at: Date.now() });
+        try {
+          const sent = await api.sendMessage({
+            chat_id: chatId,
+            text: `✍️ כתוב עכשיו את ההודעה עבור *${admName(id)}*\nשלח אותה ב-Reply (השב) להודעה הזו 👇`,
+            parse_mode: 'Markdown',
+            reply_markup: { force_reply: true, input_field_placeholder: 'תוכן ההודעה למשתמש...' },
+          });
+          if (sent && sent.message_id) admPending.set(chatId, { uid: id, msgId: sent.message_id, at: Date.now() });
+        } catch {}
+        return;
+      }
+      return;
+    }
     // 🔊 הקראת הודעה
     if (data.startsWith('say:')) {
       const txt = sayCache.get(data.slice(4));

@@ -6,7 +6,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "waba": "node waba-server.js"
+    "waba": "node waba-server.js",
+    "suno-login": "node suno-login.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

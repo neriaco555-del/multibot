@@ -90,14 +90,48 @@ export async function searchWeb(query) {
   }
   // 3. גיבוי: תשובת AI + קישור חיפוש (לשאלות כלליות)
   try {
-    const { chatAI } = await import('./ai-chat.js');
-    const { text } = await chatAI(`ענה בקצרה (עד 4 שורות) בעברית: ${clean}`);
+    const { chatAI, UTILITY } = await import('./ai-chat.js');
+    const { text } = await chatAI(`ענה בקצרה (עד 4 שורות) בעברית: ${clean}`, [], { system: UTILITY });
     if (text && !text.includes('נכשלו')) {
       return `🔍 *${clean}*\n\n${text.slice(0, 600)}\n\n🔗 גוגל: https://www.google.com/search?q=${encodeURIComponent(clean)}`;
     }
   } catch {}
   // 4. לפחות קישור חיפוש
   return `🔍 לא מצאתי תקציר, אבל הנה חיפוש מוכן:\n🔗 https://www.google.com/search?q=${encodeURIComponent(clean)}`;
+}
+
+/* ---------- העשרת שאלה בתוצאות חיפוש (משותף לצ'אט) ---------- */
+// 🔎 חיפוש רשת רק כשהוא באמת מוסיף מידע: שאלות עובדתיות/חדשותיות.
+// שיחת חולין ("מה נשמע?", "בסדר ואתה?", "למה אתה עושה לי...") לא מפעילה חיפוש —
+// אחרת ה-AI מקבל תוצאות לא קשורות ועונה תשובה לא קשורה.
+const CASUAL_ONLY = /^(?:מה\s+(?:נשמע|קורה|המצב|איתך|עניינים)|מה\s+איתך|איך\s+(?:אתה|את|הולך|מרגיש|עובר)|הכל\s+(?:בסדר|טוב)|בסדר|סבבה|אוקיי|טוב|כן|לא|אחלה|תודה|מה|למה|איך|מי|מתי|איפה|כמה)\s*[?!.…]*$/i;
+const CURRENT_WORDS = ['חדשות', 'היום', 'אתמול', 'מחר', 'עכשיו', 'השבוע', 'החודש', '2025', '2026', '2027',
+  'מזג', 'תוצאות', 'ליגה', 'נבחרת', 'בחירות', 'מחיר', 'עדכון', 'מעודכן', 'שער', 'בורסה',
+  'מניה', 'מניות', 'דולר', 'יורו', 'ביטקוין', 'קריפטו', 'מבזק'];
+
+/** האם השאלה דורשת חיפוש באינטרנט */
+export function needsWebSearch(q) {
+  const s = (q || '').trim();
+  if (s.length < 6 || s.length > 300) return false;
+  if (CASUAL_ONLY.test(s)) return false;
+  if (CURRENT_WORDS.some((w) => s.includes(w))) return true;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return false;
+  // שאלת ידע כללית — לא כשמדובר בפנייה אישית/שיחת חולין
+  if (!/\?/.test(s)) return false;
+  return !/(?:אתה|אני|אנחנו|שלי|שלך|אותי|אותך)/i.test(s);
+}
+
+/** מוסיף לשאלה תוצאות חיפוש רלוונטיות (אם צריך) */
+export async function enrichWithSearch(q) {
+  if (!needsWebSearch(q)) return q;
+  try {
+    const s = await searchWeb(q);
+    if (s && String(s).trim().length > 60) {
+      return `תוצאות חיפוש מהאינטרנט:\n${String(s).trim().slice(0, 1500)}\n\nשאלה: ${q}`;
+    }
+  } catch { /* ממשיכים בלי חיפוש */ }
+  return q;
 }
 
 /* ---------- חיפוש תמונות (רישיונות פתוחים) ---------- */
@@ -135,16 +169,42 @@ const WMO_HE = {
   96: 'סופה עם ברד ⛈️', 99: 'סופה עם ברד ⛈️',
 };
 
+/** ניסוחי עיר אפשריים: "האוויר במבוא חורון" → "מבוא חורון", "במועדון מודיעין" → "מודיעין". */
+function cityVariants(clean) {
+  const out = [];
+  const add = (s) => {
+    const v = String(s || '').replace(/\s+/g, ' ').trim().replace(/^[,.;:!?\-]+|[,.;:!?\-]+$/g, '');
+    if (v.length >= 2 && !out.includes(v)) out.push(v);
+  };
+  add(clean);
+  let x = clean;
+  // "מזג האוויר ב..." / "האוויר ב..." / "אוויר ב..."
+  x = x.replace(/^(?:מזג\s+)?(?:ה)?אוויר\s+/i, '').trim();
+  add(x);
+  // מילות יחס ומיקום לפני שם העיר
+  add(x.replace(/^(?:בתוך|באזור|בסביבת|ליד|של|את|על|אל|מן|מ|ב|ל|ה)(?=[\u0590-\u05FF])/i, ''));
+  // מתקנים/מוסדות: "במועדון מודיעין", "בקניון תל אביב"
+  add(x.replace(/^(?:ב|ל|מ|ש)?(?:מועדון|קניון|בית|עיר|אזור|כפר|שכונת|רחוב|גני|פארק)\s+/i, ''));
+  add(x.replace(/^(?:מועדון|קניון|בית|עיר|אזור|כפר|שכונת|רחוב|גני|פארק)\s+/i, ''));
+  // שילוב: גם הסרת מילת יחס וגם מתקן
+  add(x.replace(/^(?:ב|ל|מ|ש)?(?:מועדון|קניון|בית|עיר|אזור|כפר|שכונת|רחוב|גני|פארק)\s+/i, '').replace(/^(?:ב|ל|מ|ש)(?=[\u0590-\u05FF])/i, ''));
+  return out.slice(0, 6);
+}
+
 export async function getWeather(city) {
   const clean = (city || '').toString().trim().slice(0, 60);
   if (clean.length < 2) throw new Error('איזו עיר? דוגמה: !מזג תל אביב');
-  // גיאוקוד: מנסים מקור, ואז מתורגם לאנגלית
+  // גיאוקוד: מנסים ניסוחים נקיים יותר, ואז תרגום לאנגלית
   let geo = null;
-  const tries = [clean];
-  if (hasHebrew(clean)) {
-    try {
-      tries.push(await translateText(clean, 'en'));
-    } catch {}
+  const tries = [];
+  for (const v of cityVariants(clean)) {
+    if (!tries.includes(v)) tries.push(v);
+    if (hasHebrew(v)) {
+      try {
+        const en = (await translateText(v, 'en')).trim();
+        if (en && !tries.includes(en)) tries.push(en);
+      } catch {}
+    }
   }
   for (const t of tries) {
     try {
@@ -155,6 +215,27 @@ export async function getWeather(city) {
         break;
       }
     } catch {}
+  }
+  // גיבוי: OpenStreetMap (טוב יותר ליישובים קטנים בישראל)
+  if (!geo) {
+    for (const t of tries) {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=he&q=${encodeURIComponent(`${t}, Israel`)}`,
+          { headers: { 'User-Agent': 'MultiBot/1.0 (WhatsApp bot)', 'Accept-Language': 'he' } }
+        );
+        const j = await r.json();
+        if (Array.isArray(j) && j[0]?.lat) {
+          geo = {
+            latitude: +j[0].lat,
+            longitude: +j[0].lon,
+            name: String(j[0].display_name || t).split(',')[0].trim() || t,
+            country: 'ישראל',
+          };
+          break;
+        }
+      } catch {}
+    }
   }
   if (!geo) throw new Error(`לא מצאתי את העיר "${clean}"`);
   const f = await (await fetch(

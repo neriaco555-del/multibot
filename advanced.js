@@ -65,6 +65,8 @@ export function gdata(jid) {
   if (!g.toggles) g.toggles = {};
   if (typeof g.toggles.brief !== 'boolean') g.toggles.brief = false;
   if (typeof g.toggles.briefCity !== 'string' || !g.toggles.briefCity) g.toggles.briefCity = 'תל אביב';
+  if (typeof g.toggles.autoTranscribe !== 'boolean') g.toggles.autoTranscribe = false;
+  if (typeof g.toggles.onlyTranscribe !== 'boolean') g.toggles.onlyTranscribe = false;
   if (typeof g.lastBriefFull !== 'string') g.lastBriefFull = '';
   // --- ברירות מחדל לניהול (הכל פעיל — מסירים מה שלא רוצים בפאנל) ---
   const ADMIN_TOGGLE_DEFAULTS = {
@@ -72,6 +74,7 @@ export function gdata(jid) {
     antispam: true,       // אנטי-ספאם קשוח עם מחיקה
     anticurse: true,      // סינון קללות
     welcome: true,        // הודעת ברוכים הבאים
+    antiSticker: false,   // הסרת סטיקרים (כבוי כברירת מחדל)
   };
   g.toggles = Object.assign(
     { autoSticker: false, autoTranslate: false, morning: false, morningCity: 'תל אביב', rates: false, voice: 'רגיל' },
@@ -130,17 +133,23 @@ export function topPoints(jid, limit = 10) {
 }
 
 /* ---------- אנטי-ספאם ---------- */
-const spamTrack = {}; // jid|sender -> [timestamps]
+// ספים שמרניים: שיחה רגילה וקצבית בקבוצה פעילה לא נחשבת הצפה.
+// "flood" רק על חזרה אובססיבית של אותה הודעה, ו"links" רק על ריבוי קישורים אמיתי.
+const spamTrack = {}; // jid|sender -> [{ t, text, link }]
 export function spamCheck(jid, sender, text) {
   const key = jid + '|' + sender;
   const now = Date.now();
-  if (!spamTrack[key]) spamTrack[key] = [];
-  spamTrack[key] = spamTrack[key].filter((t) => now - t < 15000);
-  spamTrack[key].push(now);
-  const hasLink = /(https?:\/\/|www\.|bit\.ly|t\.me\/)/i.test(text || '');
-  const links = (spamTrack[key].length >= 3 && hasLink) ? 'links' : null;
-  if (spamTrack[key].length >= 6) return 'flood';
-  return links;
+  const clean = String(text || '').trim().slice(0, 160);
+  const hasLink = /(https?:\/\/|www\.|bit\.ly|t\.me\/)/i.test(clean);
+  const arr = (spamTrack[key] || []).filter((x) => now - x.t < 15000);
+  arr.push({ t: now, text: clean, link: hasLink });
+  spamTrack[key] = arr;
+  const linkCount = arr.filter((x) => x.link).length;
+  if (arr.length >= 9 && linkCount >= 3) return 'links';
+  const repeated = clean ? arr.filter((x) => x.text && x.text.toLowerCase() === clean.toLowerCase()).length : 0;
+  if (arr.length >= 10 && repeated >= 4) return 'flood';
+  if (arr.length >= 15) return 'flood';
+  return null;
 }
 
 /* ---------- טריוויה ---------- */
@@ -218,6 +227,13 @@ export function listEvents(jid, limit = 10) {
 export function addReminder(jid, rem) {
   const g = gdata(jid);
   rem.id = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  // לא יורים מיד תזכורת שזה עתה נוצרה אחרי שהשעה שלה כבר עברה היום
+  const now = new Date();
+  if (rem.everyHour && !rem.lastFiredHour) rem.lastFiredHour = `${dayKey(now)} ${now.getHours()}`;
+  if (rem.daily) {
+    const curHM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (curHM >= rem.daily && rem.lastFired !== dayKey(now)) rem.lastFired = dayKey(now);
+  }
   g.reminders.push(rem);
   if (g.reminders.length > 30) g.reminders = g.reminders.slice(-30);
   save();
@@ -245,7 +261,188 @@ export function removeReminder(jid, idxOrAll) {
 function dayKey(d = new Date()) {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
+
+/* ---------- 🧠 פענוח זמן בשפה חופשית לתזכורות ---------- */
+const HE_HOURS = [
+  ['אחת עשרה', 11], ['שתים עשרה', 12], ['שתיים עשרה', 12], ['אחת', 1], ['שתיים', 2], ['שתים', 2],
+  ['שלוש', 3], ['ארבע', 4], ['חמש', 5], ['שש', 6], ['שבע', 7], ['שמונה', 8], ['תשע', 9],
+  ['עשרה', 10], ['עשר', 10],
+];
+const MINUTE_WORDS = { 'חצי': 30, 'רבע': 15, 'עשרה': 10, 'עשר': 10, 'עשרים': 20, 'חמש': 5 };
+const DAY_PART_RE = /(אחר\s+הצהריים|אחה["״']?צ|בצהריים|בבוקר|בערב|בלילה)/i;
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const minuteFromWord = (w) => (w && MINUTE_WORDS[w]) || 0;
+function partDefaultHour(part) {
+  if (/בוקר/.test(part)) return 8;
+  if (/צהריים/.test(part)) return 12;
+  if (/אחה|אחר\s+הצהריים/.test(part)) return 16;
+  if (/ערב/.test(part)) return 20;
+  if (/לילה/.test(part)) return 0;
+  return 9;
+}
+function applyDayPart(hour, part) {
+  if (!part) return hour;
+  if (/לילה/.test(part)) {
+    if (hour === 12) return 0;
+    if (hour <= 5) return hour;
+    return hour < 12 ? hour + 12 : hour;
+  }
+  if (/ערב|אחה|אחר\s+הצהריים|צהריים/.test(part)) {
+    return hour < 12 ? hour + 12 : hour;
+  }
+  return hour;
+}
+
+/** מחלץ שעה/יום מתוך טקסט חופשי. מחזיר {hour,minute,dayOffset,text} או null. */
+function extractReminderTime(input) {
+  let text = String(input || '').trim();
+  if (!text) return null;
+  let dayOffset = 0;
+  const dm = text.match(/^(מחרתיים|מחר|היום)\s+/);
+  if (dm) {
+    dayOffset = dm[1] === 'מחרתיים' ? 2 : dm[1] === 'מחר' ? 1 : 0;
+    text = text.slice(dm[0].length);
+  }
+  let part = '';
+  const pm = text.match(DAY_PART_RE);
+  if (pm) {
+    part = pm[1];
+    text = text.replace(pm[1], ' ');
+  }
+  let hour = null;
+  let minute = 0;
+  let explicit = false;
+
+  // HH:MM (עם או בלי "בשעה"/"ב-")
+  let m = text.match(/(?:^|\s)(?:בשעה\s+|בשעת\s+|ב-?\s*)?(\d{1,2}):(\d{1,2})(?=\s|$)/);
+  if (m) {
+    hour = +m[1]; minute = +m[2]; explicit = true;
+    text = text.replace(m[0], ' ');
+  }
+  // מספר שעה עם סימן זמן (בבוקר / בשעה / מחר / ב-)
+  if (hour == null) {
+    m = text.match(/(?:^|\s)(?:בשעה\s+|בשעת\s+|ב-?\s*)?(\d{1,2})(?:\s*ו?(חצי|רבע|עשרה|עשר|עשרים|חמש))?(?=\s|$)/);
+    if (m) {
+      const marked = /בשעה|בשעת|ב-/.test(m[0]) || !!(part || dm);
+      if (marked) {
+        hour = +m[1]; minute = minuteFromWord(m[2]); explicit = true;
+        text = text.replace(m[0], ' ');
+      }
+    }
+  }
+  // שעה במילים: "בשמונה", "בשמונה וחצי"
+  if (hour == null) {
+    const words = HE_HOURS.map(([w]) => w).sort((a, b) => b.length - a.length).join('|');
+    const hre = new RegExp(`(?:^|\\s)(?:בשעה\\s+|בשעת\\s+|ב)?(${words})(?:\\s*ו?(חצי|רבע|עשרה|עשר|עשרים|חמש))?(?=\\s|$)`);
+    m = text.match(hre);
+    if (m) {
+      const found = HE_HOURS.find(([w]) => w === m[1]);
+      hour = found ? found[1] : null;
+      minute = minuteFromWord(m[2]);
+      explicit = hour != null;
+      if (explicit) text = text.replace(m[0], ' ');
+    }
+  }
+  // "מחר בבוקר" / "היום בערב" בלי שעה מפורשת
+  if (hour == null && part) {
+    hour = partDefaultHour(part);
+    explicit = true;
+  }
+  if (!explicit || hour == null) return null;
+  hour = Math.max(0, Math.min(23, applyDayPart(hour, part)));
+  minute = Math.max(0, Math.min(59, minute || 0));
+  text = text.replace(/[ \t]+/g, ' ').replace(/^[\s:\-]+|[\s:\-]+$/g, '').trim();
+  return { hour, minute, dayOffset, text };
+}
+
+/**
+ * פענוח תזכורת בשפה חופשית.
+ * מחזיר {at}|{daily}|{everyHour}|{needsTime}|{past} + text, או null.
+ */
+export function parseReminderInput(arg, now = new Date()) {
+  let raw = String(arg || '').trim();
+  if (!raw) return null;
+  // ניקוי מילות פנייה/יחס נפוצות: "תזכורת לקבוצה למחר בבוקר..." → "מחר בבוקר..."
+  raw = raw.replace(/^(?:לקבוצה|בקבוצה|לנו|לי)\s+/i, '').trim();
+  raw = raw.replace(/^ל(?=(?:מחרתיים|מחר|היום)(?:\s|$))/i, '').trim();
+
+  // כל שעה / כל יום כל שעה
+  let m = raw.match(/^(?:כל\s+יום\s+)?כל\s+שעה(?:\s+|$)([\s\S]*)$/i);
+  if (m && m[1].trim()) return { everyHour: true, text: m[1].trim() };
+
+  // יומית / כל יום / בכל יום + שעה
+  m = raw.match(/^(?:יומית|כל\s+יום|בכל\s+יום)\s+([\s\S]+)$/i);
+  if (m) {
+    const rest = m[1].trim();
+    const t = extractReminderTime(rest);
+    if (!t) return { needsTime: true, text: rest };
+    if (!t.text) return null;
+    return { daily: `${pad2(t.hour)}:${pad2(t.minute)}`, text: t.text };
+  }
+
+  // תאריך ISO: 2026-10-27 08:00 ...
+  m = raw.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})\s+([\s\S]+)$/);
+  if (m) {
+    const rest = m[4].trim();
+    const t = extractReminderTime(rest);
+    const hour = t ? t.hour : 9;
+    const minute = t ? t.minute : 0;
+    const rtext = (t ? t.text : rest).trim();
+    if (!rtext) return null;
+    const at = new Date(+m[1], +m[2] - 1, +m[3], hour, minute).getTime();
+    if (!Number.isFinite(at)) return null;
+    if (at <= now.getTime()) return { past: true, text: rtext };
+    return { at, text: rtext };
+  }
+
+  // תאריך מפורש: 25.12 / 25.12.2026 + שעה (ברירת מחדל 09:00)
+  m = raw.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\s+([\s\S]+)$/);
+  if (m) {
+    const y = m[3] ? (m[3].length === 2 ? `20${m[3]}` : m[3]) : String(now.getFullYear());
+    const rest = m[4].trim();
+    const t = extractReminderTime(rest);
+    const hour = t ? t.hour : 9;
+    const minute = t ? t.minute : 0;
+    const rtext = (t ? t.text : rest).trim();
+    if (!rtext) return null;
+    const at = new Date(+y, +m[2] - 1, +m[1], hour, minute).getTime();
+    if (!Number.isFinite(at)) return null;
+    if (at <= now.getTime()) return { past: true, text: rtext };
+    return { at, text: rtext };
+  }
+
+  // משך במילים: חצי שעה / שעה / שעתיים
+  m = raw.match(/^(?:בעוד\s+)?(חצי\s+שעה|שעתיים|שעה)\s+([\s\S]+)$/i);
+  if (m) {
+    const mins = /שעתיים/.test(m[1]) ? 120 : /חצי/.test(m[1]) ? 30 : 60;
+    return { at: now.getTime() + mins * 60000, text: m[2].trim(), durationMin: mins };
+  }
+
+  // משך: 30 דקות / 2 שעות
+  const dur = raw.match(/^(?:בעוד\s+)?(\d+)\s*(דקות|דקה|דק׳|דק|שעות|שעה|ש׳)?\s*([\s\S]+)$/);
+  if (dur && !DAY_PART_RE.test(raw) && !/(?:בשעה|ב-|\d{1,2}:\d{2})/.test(raw)) {
+    let mins = parseInt(dur[1], 10);
+    if (/שע/.test(dur[2] || '')) mins *= 60;
+    const rtext = dur[3].trim();
+    if (!rtext) return null;
+    if (mins >= 1 && mins <= 43200) return { at: now.getTime() + mins * 60000, text: rtext, durationMin: mins };
+  }
+
+  // שעה חופשית: "8 בבוקר", "בשמונה", "מחר ב-8", "18:30"
+  const t = extractReminderTime(raw);
+  if (t && t.text) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + (t.dayOffset || 0));
+    d.setHours(t.hour, t.minute, 0, 0);
+    if (!t.dayOffset && d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
+    return { at: d.getTime(), text: t.text };
+  }
+  return null;
+}
+
 export function fmtReminderTime(r) {
+  if (r.everyHour) return 'כל שעה';
   if (r.daily) return `יומית ${r.daily}`;
   if (r.at) {
     const d = new Date(r.at);
@@ -263,9 +460,14 @@ export function popDueReminders(jid, now = Date.now()) {
   const today = dayKey(new Date(now));
   const cur = new Date(now);
   const curHM = `${String(cur.getHours()).padStart(2, '0')}:${String(cur.getMinutes()).padStart(2, '0')}`;
+  const curHourKey = `${today} ${cur.getHours()}`;
   for (const r of g.reminders) {
     if (r.at && now >= r.at) {
       due.push(r); // חד-פעמית — לא נשמרת
+    } else if (r.everyHour && r.lastFiredHour !== curHourKey) {
+      r.lastFiredHour = curHourKey;
+      due.push(r);
+      keep.push(r);
     } else if (r.daily && curHM >= r.daily && r.lastFired !== today) {
       r.lastFired = today;
       due.push(r);

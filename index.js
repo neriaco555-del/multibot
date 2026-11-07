@@ -23,11 +23,12 @@ import makeWASocket, {
 import { config, isGroupAllowed } from './config.js';
 import { chatAI } from './ai-chat.js';
 import { generateImage, generateStickerImage } from './ai-image.js';
-import { searchYouTube, formatMediaResults, resolveYouTubeChannel } from './media-search.js';
+import { searchYouTube, formatMediaResults, resolveYouTubeChannel, rankVideos } from './media-search.js';
 import { toStickerBuffer, videoToStickerBuffer, memeSticker, removeStickerBackground } from './sticker-utils.js';
 import { textToSpeech } from './ai-voice.js';
 import { createAIVideo } from './ai-video.js';
 import { searchProducts, affiliateUrl } from './aliexpress.js';
+import { adsTick, sendAdNow, adsStatus, loadAdsConfig, saveAdsConfig } from './ads.js';
 import {
   animalImage, currencyRates, cryptoPrices, newsHe,
   cityTime, dice, coin, pickOne, genPassword, randNum, randColor, dateHe, countdown, rnd,
@@ -41,11 +42,12 @@ import {
 import { AI_TOOLS, resolveAiTool, runAiTool, aiToolUsage } from './aifun.js';
 import fs from 'node:fs';
 import { searchWeb, searchImages, translateText, getWeather } from './web-search.js';
+import { getJobs, getNewJobs, formatJobsDigest, formatJobsSingle, recordPosted, loadJobsStore, saveJobsStore, setJobStatus, setJobsAuto, jobsAutoOn } from './jobs.js';
 import {
   gdata, save as saveStore, logMessage, recentChat, addPoint, addPoints, topPoints,
   spamCheck, newTrivia, newPoll, pollResults, setBirthday, todayBirthdays,
   addEvent, listEvents, checkChannel,
-  addReminder, listReminders, removeReminder, popDueReminders, fmtReminderTime,
+  addReminder, listReminders, removeReminder, popDueReminders, fmtReminderTime, parseReminderInput,
   bumpFreeQuota, getProCache, setProCache, mergeKnownGroups,
   learnPair, listLearned, forgetLearned, matchLearned,
   addContent, listContent, delContent, pickContent, stickerDayDone,
@@ -56,11 +58,12 @@ import {
   isMuted, muteUser, unmuteUser,
   deleteMsg, buildWelcome, invalidateMeta, resolveCanonical, kickParticipant, getGroupMeta,
 } from './admin.js';
-import { transcribeAudio, trimAudio, pitchVoice, downloadYouTubeAudio, downloadYouTubeVideo, describeImage } from './aimedia.js';
+import { transcribeAudio, trimAudio, pitchVoice, downloadYouTubeAudio, downloadVideoFromUrl, resolveMediaUrls, uploadToLitterbox, describeImage } from './aimedia.js';
 import { decodeQRCodes, aiJudgeText, aiJudgeImage } from './aiguard.js';
 import { generateSiteHTML, updateSiteHTML, publishSite, getSite, newSiteId, extractSiteId, waitForSite, SITE_HELP } from './sites.js';
 import { subsConfigured, SUBS_SETUP_HELP, normPhone, parseDuration, fmtLeft, grantSub, revokeSub, getSub, readSubs, popExpiredSubs, splitPhoneDur, isPro, proPitch, bgList, bgPick, bgSearch, bgExtra, bgSearchExtra, bgResolve, driveImageUrl } from './subs.js';
-import { normalizeNaturalCommand, aiRouteCommand, aiUnderstand, KNOWN_FIRST } from './nlp.js';
+import { normalizeNaturalCommand, aiRouteCommand, aiUnderstand, aiChat, KNOWN_FIRST, parseSunoRequest } from './nlp.js';
+import { sunoHasAuth, sunoGenerate, SUNO_SETUP_HELP } from './suno-mcp.js';
 
 const HELP_1 = `🤖 *${config.BOT_NAME} — מדריך מלא (חלק 1: AI ומדיה)*
 
@@ -97,6 +100,13 @@ const HELP_1 = `🤖 *${config.BOT_NAME} — מדריך מלא (חלק 1: AI ו�
 • ${config.BOT_PREFIX}שיר Imagine Dragons Believer
 מילים נרדפות: מוזיקה, נגן.
 
+🎼 *יצירת שיר/מנגינה חדשה עם Suno — בשפה חופשית!*
+פשוט כתבו מה אתם רוצים, בלי פקודה:
+• "תעשה לי שיר על הים בסגנון פופ"
+• "תעשה שיר עם המילים: ..." (המילים שלכם)
+• "תעשה לי מנגינה רגועה של פסנתר"
+Suno יוצר שיר אמיתי עם שירה 🎤 (נדרש חיבור חד-פעמי של הבעלים: npm run suno-login).
+
 ━━━━━━━━━━━━━━
 🎬 *${config.BOT_PREFIX}וידאו <נושא> — חיפוש סרטון*
 מחזיר 3 סרטונים מיוטיוב עם קישורים.
@@ -104,6 +114,11 @@ const HELP_1 = `🤖 *${config.BOT_NAME} — מדריך מלא (חלק 1: AI ו�
 • ${config.BOT_PREFIX}וידאו איך מכינים חומוס
 • ${config.BOT_PREFIX}סרטון שערים של מסי
 מילים נרדפות: סרטון, סרטונים, יוטיוב.
+
+🎬 *${config.BOT_PREFIX}סרט <שם> — הורדת סרטון*
+מחזיר 5 אפשרויות; כותבים מספר 1-5 והבוט מוריד רק את הנבחר (עד ~100MB).
+קובץ מעל ~16MB נשלח כקישור הורדה זמני (72 שעות) במקום כקובץ בוואטסאפ.
+🔗 אפשר גם לשלוח קישור ישיר (עמוד/קובץ וידאו מהאתר) — הבוט יוריד אותו.
 
 ━━━━━━━━━━━━━━
  ⭐ *${config.BOT_PREFIX}סטיקר — יצירת מדבקה*
@@ -340,6 +355,7 @@ const HELP_SHORT = `🤖 *${config.BOT_NAME} — מה אני יודע לעשות
 😂 *כיף* — בדיחות, חידות, טריוויה, משחקי קבוצה
 📸 *תמונת פרופיל* — תייג מישהו והבוט חושף אותו 😂
 ⏰ *לקבוצה* — תזכורות, סקרים, תורנויות, ימי הולדת
+💼 *עבודות* — משרות אמיתיות מכל הסוגים והגילאים (JobMaster + Job Scouter)
 🌐 *יצירת אתרים* — תיאור במילים שלך, מקבל כתובת לאתר חי
 🔍 *זיהוי מספרים* — רק בפרטי: ${config.BOT_PREFIX}זהה (מחזיר שם + קובץ אנשי קשר)
 👀 *צפיות בסטטוס* — ${config.BOT_PREFIX}מי-צפה (מי שמר אותך ולא שמור אצלך + קובץ)
@@ -496,6 +512,13 @@ const HELP_5 = `🛡️ *מדריך מנהלים (חלק 5 — רק למנהלי
 • ${config.BOT_PREFIX}קישורים — מציג מצב
 
 ━━━━━━━━━━━━━━
+🧷 *הסרת סטיקרים*
+• ${config.BOT_PREFIX}סטיקרים on — כל סטיקר של חבר שאינו מנהל נמחק + אזהרה (3 אזהרות = הרחקה)
+• ${config.BOT_PREFIX}סטיקרים off — כיבוי
+• ${config.BOT_PREFIX}סטיקרים — מציג מצב
+• מנהלים פטורים; הבוט עצמו פטור (סטיקרים שהוא שולח לא נמחקים)
+
+━━━━━━━━━━━━━━
 🤖 *שומר-AI (לא מוחק סתם!)*
 • ${config.BOT_PREFIX}שומר on — ה-AI מאשר כל מחיקה, סורק תמונות (עירום/פוגעני),
   ותופס קללות וספאם שהפילטרים הרגילים מפספסים
@@ -507,7 +530,7 @@ const HELP_5 = `🛡️ *מדריך מנהלים (חלק 5 — רק למנהלי
 • ${config.BOT_PREFIX}קללות on / off
 • ${config.BOT_PREFIX}מילה-אסורה <מילה> — הוספה לרשימה
 • ${config.BOT_PREFIX}מחק-מילה <מילה> — הסרה | ${config.BOT_PREFIX}מילים-אסורות — רשימה
-• ${config.BOT_PREFIX}ספאם-קשוח on / off — מחיקת הצפות אוטומטית
+• ${config.BOT_PREFIX}ספאם-קשוח on / off — מחיקת הצפות + אזהרות (3 אזהרות = הרחקה)
 
 ━━━━━━━━━━━━━━
 👋 *ברוכים הבאים* | 📜 *חוקים*
@@ -690,14 +713,31 @@ const imgInFlight = new Map(); // 🎨 בקשות תמונה שרצות כרגע
 const videoInFlight = new Map(); // 🎬 בקשות סרטון שרצות כרגע (מניעת כפילות)
 /* ---------- 🤖 ממסר Instinct (בוט תמונות חיצוני) ---------- */
 const instBare = (j) => String(j || '').split('@')[0].replace(/\D/g, '');
-const INSTINCT_BARES = new Set([instBare(config.INSTINCT_JID), '23949492670633']);
+// 🤖 שני בוטי-תמונות (Instinct) — כל בקשה עוברת לאחד מהם ברוטציה
+const INSTINCT_KNOWN = [...new Set([
+  ...(config.INSTINCT_JIDS || [config.INSTINCT_JID]),
+  ...(config.INSTINCT_ACTIVE_JIDS || []),
+].map(instBare).filter(Boolean))];
+// רק המספרים הפעילים מקבלים בקשות. ברירת מחדל: הראשון בלבד (השני מוכר אך כבוי).
+const INSTINCT_TARGETS = [...new Set((config.INSTINCT_ACTIVE_JIDS || [config.INSTINCT_JID]).map(instBare).filter(Boolean))];
+// מיפויי LID ידועים של בוטי-התמונות (גיבוי גם אם lid-map.json חסר)
+const INSTINCT_LID_PHONES = new Map([
+  ['23949492670633', '16508702892'],
+  ['70713146904747', '12512765320'],
+]);
+const INSTINCT_BARES = new Set([...INSTINCT_KNOWN, ...INSTINCT_LID_PHONES.keys()]);
+const instinctSendJids = new Map(); // מספר -> JID אמיתי (LID/PN) לשליחה
+for (const [lid, phone] of INSTINCT_LID_PHONES) {
+  if (INSTINCT_KNOWN.includes(phone)) instinctSendJids.set(phone, `${lid}@lid`);
+}
+let instinctRr = 0;
 let instinctPending = null;
 let instinctLate = null; // 🤖 בקשה שפג תוקפה אבל התמונה עוד עשויה להגיע — תימסר באיחור
 const instinctQueue = [];
 let instinctRunning = false;
 let instinctFails = 0; // כשלונות רצופים — אחרי 2 מדלגים זמנית על הממסר (עד הצלחה)
 let instinctColdAt = 0;
-let activeJob = null; // בקשת Instinct הפעילה כרגע {chatJid, waitingHuman}
+let activeJob = null; // בקשת Instinct הפעילה כרגע {chatJid, waitingHuman, target, sendJid}
 function instinctCold() {
   if (instinctFails < 2) return false;
   if (Date.now() - instinctColdAt > 5 * 60 * 1000) {
@@ -710,27 +750,53 @@ function instinctBumpFail() {
   instinctFails++;
   if (instinctFails === 2) instinctColdAt = Date.now();
 }
-let instinctSendJid = '23949492670633@lid'; // ה-JID שכן עובד לשליחה (LID בזמן אמת)
+let instinctSendJid = '23949492670633@lid'; // fallback ל-JID שכן עובד לשליחה
 let instinctQTimer = null; // טיימאאוט לשאלת הבהרה — לא מחכים לנצח לתשובה אנושית
+/** מספר הטלפון של אחד מבוטי-התמונות (גם אם ההודעה הגיעה כ-LID), או ''. */
+function instinctPhone(jid) {
+  try {
+    const raw = String(jid || '');
+    const b = instBare(raw);
+    if (INSTINCT_KNOWN.includes(b)) return b;
+    const lid = raw.split('@')[0];
+    const mapped = lidPnMap.get(lid) || INSTINCT_LID_PHONES.get(lid) || lidPhoneCache.get(raw) || lidPhoneCache.get(`${lid}@lid`);
+    const mb = instBare(mapped);
+    return INSTINCT_KNOWN.includes(mb) ? mb : '';
+  } catch { return ''; }
+}
 function isInstinctJid(jid) {
   try {
-    const b = instBare(jid);
-    if (INSTINCT_BARES.has(b)) return true;
-    const mapped = lidPhoneCache.get(jid);
-    return !!(mapped && INSTINCT_BARES.has(instBare(mapped)));
+    if (instinctPhone(jid)) return true;
+    return INSTINCT_BARES.has(instBare(jid));
   } catch { return false; }
 }
+/** בחירת בוט-התמונות הבא בתור (פעם זה ופעם זה). */
+function nextInstinctTarget() {
+  const list = INSTINCT_TARGETS.length ? INSTINCT_TARGETS : [instBare(config.INSTINCT_JID)].filter(Boolean);
+  const t = list[instinctRr % list.length] || '';
+  instinctRr++;
+  return t;
+}
+function instinctTargetJid(phone) {
+  const p = instBare(phone);
+  return instinctSendJids.get(p) || (p ? `${p}@s.whatsapp.net` : config.INSTINCT_JID);
+}
 async function resolveInstinct(sock) {
-  try {
-    const r = await sock.onWhatsApp('16508702892');
-    const j = r?.[0]?.jid;
-    if (j) INSTINCT_BARES.add(instBare(j));
-  } catch {}
+  for (const t of INSTINCT_KNOWN) {
+    try {
+      const r = await sock.onWhatsApp(t);
+      const j = r?.[0]?.jid;
+      if (j) {
+        INSTINCT_BARES.add(instBare(j));
+        if (!instinctSendJids.has(t)) instinctSendJids.set(t, j);
+      }
+    } catch {}
+  }
 }
 function requestInstinct(sock, prompt, chatJid, mediaBuf = null) {
   return new Promise((resolve, reject) => {
     const pos = instinctQueue.length + (instinctRunning ? 1 : 0);
-    instinctQueue.push({ prompt: String(prompt || '').slice(0, 1000), chatJid, mediaBuf, resolve, reject, at: Date.now() });
+    instinctQueue.push({ prompt: String(prompt || '').slice(0, 1000), chatJid, mediaBuf, resolve, reject, at: Date.now(), target: nextInstinctTarget() });
     // חיווי תור: אם יש בקשה פעילה/ממתינה לפנייך — אומרים, שלא ייראה תקוע
     // (shabbatSend כדי שלא ייחסם בקבוצת שבת-מוד — בהפעלה רגילה זהה לשליחה רגילה)
     if (pos > 0 && /@g\.us$|@s\.whatsapp\.net$|@lid$/.test(String(chatJid || ''))) {
@@ -749,7 +815,9 @@ async function pumpInstinct(sock) {
     return pumpInstinct(sock);
   }
   instinctRunning = true;
-  activeJob = { chatJid: job.chatJid, waitingHuman: false };
+  const target = job.target || INSTINCT_TARGETS[0] || '';
+  const sendJid = instinctTargetJid(target);
+  activeJob = { chatJid: job.chatJid, waitingHuman: false, target, sendJid };
   try {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await new Promise((resolve, reject) => {
@@ -757,20 +825,20 @@ async function pumpInstinct(sock) {
         if (instinctPending && instinctPending.id === id) {
           instinctPending = null;
           // שומרים למסירה מאוחרת — אם התמונה תגיע אחרי הטיימאאוט היא תישלח בכל זאת
-          instinctLate = { chatJid: job.chatJid, at: Date.now(), prompt: job.prompt };
+          instinctLate = { chatJid: job.chatJid, at: Date.now(), prompt: job.prompt, target };
           reject(new Error('TIMEOUT'));
         }
       }, config.INSTINCT_TIMEOUT_MS);
       instinctPending = {
-        id, timer, chatJid: job.chatJid,
+        id, timer, chatJid: job.chatJid, target, sendJid,
         resolve: (buf) => { clearTimeout(timer); try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {} resolve(buf); },
         reject: (e) => { clearTimeout(timer); try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {} reject(e); },
       };
       const sendPayload = job.mediaBuf
         ? { image: job.mediaBuf, caption: job.prompt }
         : { text: job.prompt };
-      sock.sendMessage(instinctSendJid || config.INSTINCT_JID, sendPayload).then(
-        () => console.log('🤖 instinct asked (queue)'),
+      sock.sendMessage(sendJid || config.INSTINCT_JID, sendPayload).then(
+        () => console.log(`🤖 instinct asked (queue) → ${target || sendJid}`),
         (e) => {
           instinctPending = null;
           clearTimeout(timer);
@@ -785,7 +853,701 @@ async function pumpInstinct(sock) {
     if (instinctQueue.length) pumpInstinct(sock).catch(() => {});
   }
 }
-const lastMedia = new Map(); // 🎬🎵🎨 פקודת מדיה אחרונה לכל צ'אט — ל"עוד" (remoteJid -> {kind, q, at})
+/* ---------- 🎬 ממסר יצירת סרטונים (בוט וידאו חיצוני בוואטסאפ) ---------- */
+const VIDEO_STORE_PATH = new URL('./video-relay.json', import.meta.url);
+const VIDEO_BOTS = [...new Set([config.VIDEO_JID, config.VIDEO_FALLBACK_JID].map(instBare).filter(Boolean))];
+const VIDEO_PRIMARY = instBare(config.VIDEO_JID);
+const VIDEO_LIDS = new Set(['70713146904747', '23949492670633']);
+const VIDEO_BARES = new Set([...VIDEO_BOTS, ...VIDEO_LIDS]);
+const videoSendJids = new Map(); // מספר -> JID אמיתי לשליחה
+for (const [lid, phone] of INSTINCT_LID_PHONES) {
+  if (VIDEO_BOTS.includes(phone)) videoSendJids.set(phone, `${lid}@lid`);
+}
+const videoQueue = [];
+let videoRunning = false;
+let videoPending = null; // { id, serial, target, chatJid, sendJid, prompt, resolve, reject }
+let videoDeliveredResolve = null; // 🚦 ממתין שהסרטון יישלח למבקש לפני מעבר לבקשה הבאה
+let ownerChatJid = ''; // 👑 ה-JID של הבעלים בפרטי (נשמר כשהוא כותב לבוט)
+
+// --- 🎬 אישורי בקשות סרטון ממשתמשים חדשים ---
+const VIDEO_APPROVALS_PATH = new URL('./video-approvals.json', import.meta.url);
+function videoApprovalsLoad() {
+  try {
+    const db = JSON.parse(fs.readFileSync(VIDEO_APPROVALS_PATH, 'utf-8'));
+    const list = Array.isArray(db.requests) ? db.requests : [];
+    const cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const pendingCut = Date.now() - 24 * 60 * 60 * 1000;
+    return { requests: list.filter((r) => {
+      const at = r?.createdAt || 0;
+      if (at <= cut) return false;
+      if (r?.status === 'pending' && at <= pendingCut) return false;
+      return true;
+    }).slice(-200) };
+  } catch { return { requests: [] }; }
+}
+function videoApprovalsSave(db) {
+  try { fs.writeFileSync(VIDEO_APPROVALS_PATH, JSON.stringify(db)); } catch {}
+}
+function videoApprovalsHavePending() {
+  return videoApprovalsLoad().requests.some((r) => r.status === 'pending');
+}
+/** ה-JID לשליחת התראות לבעלים (עדיף הצ'אט שבו הוא כתב, אחרת LID/מספר). */
+function ownerTargetJid() {
+  if (ownerChatJid) return ownerChatJid;
+  try {
+    for (const [lid, phone] of lidPnMap) {
+      if (phone === OWNER_DIGITS) return `${lid}@lid`;
+    }
+  } catch {}
+  return `${OWNER_DIGITS}@s.whatsapp.net`;
+}
+
+function videoLoad() {
+  try {
+    const db = JSON.parse(fs.readFileSync(VIDEO_STORE_PATH, 'utf-8'));
+    const today = todayStr();
+    if (db.date !== today) return { date: today, users: {}, bots: {} };
+    if (!db.users || typeof db.users !== 'object') db.users = {};
+    if (!db.bots || typeof db.bots !== 'object') db.bots = {};
+    return db;
+  } catch { return { date: todayStr(), users: {}, bots: {} }; }
+}
+function videoSave(db) {
+  try { fs.writeFileSync(VIDEO_STORE_PATH, JSON.stringify(db)); } catch {}
+}
+function videoUserKey(jid) {
+  return resolveOwnPhone(jid) || instBare(jid);
+}
+/** מספר הטלפון לתצוגה/לשליחה: ישראלי בפורמט מקומי (055...) או ספרות בינלאומיות. */
+function videoPhoneTag(jid) {
+  const d = videoUserKey(jid);
+  if (/^972\d{9}$/.test(d)) return '0' + d.slice(3);
+  return d || '';
+}
+function videoNormPhone(v) {
+  let d = String(v || '').replace(/\D/g, '');
+  if (/^0\d{8,9}$/.test(d)) d = '972' + d.slice(1);
+  return d;
+}
+function videoPhone(jid) {
+  try {
+    const raw = String(jid || '');
+    const b = instBare(raw);
+    if (VIDEO_BOTS.includes(b)) return b;
+    const lid = raw.split('@')[0];
+    const mapped = lidPnMap.get(lid) || INSTINCT_LID_PHONES.get(lid) || lidPhoneCache.get(raw) || lidPhoneCache.get(`${lid}@lid`);
+    const mb = instBare(mapped);
+    return VIDEO_BOTS.includes(mb) ? mb : '';
+  } catch { return ''; }
+}
+function isVideoBotJid(jid) {
+  try { return !!videoPhone(jid) || VIDEO_BARES.has(instBare(jid)); } catch { return false; }
+}
+async function resolveVideoBots(sock) {
+  for (const p of VIDEO_BOTS) {
+    try {
+      const r = await sock.onWhatsApp(p);
+      const j = r?.[0]?.jid;
+      if (j) {
+        VIDEO_BARES.add(instBare(j));
+        if (!videoSendJids.has(p)) videoSendJids.set(p, j);
+      }
+    } catch {}
+  }
+}
+function makeVideoSerial() {
+  return String(100000 + Math.floor(Math.random() * 900000));
+}
+function markVideoDelivered() {
+  const r = videoDeliveredResolve;
+  videoDeliveredResolve = null;
+  try { r?.(); } catch {}
+}
+function finishVideoPending(res) {
+  const p = videoPending;
+  if (!p) return;
+  videoPending = null;
+  p.resolve(res);
+}
+function failVideoPending(err) {
+  const p = videoPending;
+  if (!p) return;
+  videoPending = null;
+  p.reject(err);
+}
+function videoAttempt(sock, job, target, serial) {
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const sendJid = videoSendJids.get(target) || `${target}@s.whatsapp.net`;
+    let timer = null;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (videoPending && videoPending.id === id) {
+          videoPending = null;
+          reject(new Error('TIMEOUT'));
+        }
+      }, config.VIDEO_TIMEOUT_MS);
+    };
+    videoPending = {
+      id, serial, target, sendJid, chatJid: job.chatJid, prompt: job.prompt,
+      phoneTag: job.phoneTag, phoneDigits: job.phoneDigits, unlimited: !!job.unlimited,
+      waitingHuman: false, startedAt: Date.now(), extend: arm,
+      resolve: (res) => { clearTimeout(timer); resolve(res); },
+      reject: (e) => { clearTimeout(timer); reject(e); },
+    };
+    arm();
+    sock.sendMessage(sendJid, { text: `#${job.phoneTag || serial} ${job.prompt}` }).then(
+      () => console.log(`🎬 video asked #${job.phoneTag || serial} (${serial}) → ${target}`),
+      (e) => {
+        if (videoPending && videoPending.id === id) {
+          videoPending = null;
+          clearTimeout(timer);
+          reject(e);
+        }
+      }
+    );
+  });
+}
+async function pumpVideos(sock) {
+  if (videoRunning) return;
+  const job = videoQueue.shift();
+  if (!job) return;
+  videoRunning = true;
+  try {
+    if (!job.unlimited && Date.now() - job.at > 8 * 60 * 60 * 1000) { job.reject(new Error('STALE')); return; }
+    const db = videoLoad();
+    const targets = job.unlimited
+      ? VIDEO_BOTS.slice()
+      : VIDEO_BOTS.filter((p) => (db.bots[p] || 0) < config.VIDEO_DAILY_PER_BOT);
+    if (!targets.length) { job.reject(new Error('לא נותרו ניסיונות סרטון להיום')); return; }
+    let lastErr = null;
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      if (!job.unlimited) {
+        const db2 = videoLoad();
+        if ((db2.bots[target] || 0) >= config.VIDEO_DAILY_PER_BOT) continue;
+        db2.bots[target] = (db2.bots[target] || 0) + 1;
+        videoSave(db2);
+      }
+      if (i > 0) {
+        await sock.sendMessage(job.chatJid, { text: `⏳ הבוט הראשי לא ענה — מנסה את בוט הגיבוי (#${job.phoneTag || job.serial})...` }).catch(() => {});
+      }
+      try {
+        const res = await videoAttempt(sock, job, target, job.serial);
+        const delivered = new Promise((resolve) => { videoDeliveredResolve = resolve; });
+        job.resolve(res);
+        // 🚦 לא שולחים את הבקשה הבאה לבוט הווידאו עד שהסרטון הקודם נשלח ללקוח
+        await Promise.race([delivered, new Promise((r) => setTimeout(r, 10 * 60 * 1000))]);
+        videoDeliveredResolve = null;
+        return;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`🎬 video attempt failed (${target}):`, (e?.message || '').slice(0, 120));
+      }
+    }
+    job.reject(lastErr || new Error('VIDEO_FAILED'));
+  } finally {
+    videoRunning = false;
+    if (videoQueue.length) pumpVideos(sock).catch(() => {});
+  }
+}
+function requestVideoRelay(sock, prompt, chatJid, serial, phoneTag, unlimited) {
+  return new Promise((resolve, reject) => {
+    videoQueue.push({
+      prompt: String(prompt || '').slice(0, 1000), chatJid, serial, phoneTag,
+      phoneDigits: videoNormPhone(phoneTag), unlimited: !!unlimited,
+      resolve, reject, at: Date.now(),
+    });
+    pumpVideos(sock).catch(() => {});
+  });
+}
+/** מטפל בתשובה מבוט-הסרטונים. מחזיר true אם ההודעה טופלה (אין להעביר ל-Instinct). */
+async function tryHandleVideoBotMessage(sock, msg, remoteJid) {
+  if (!isVideoBotJid(remoteJid)) return false;
+  const inPhone = videoPhone(remoteJid);
+  if (inPhone) videoSendJids.set(inPhone, remoteJid);
+  const dm = msg.message?.documentMessage;
+  const docIsVideo = !!(dm && (/video/i.test(dm.mimetype || '') || /\.(mp4|mov|webm|mkv)$/i.test(dm.fileName || '')));
+  const isVid = !!(msg.message?.videoMessage || msg.message?.ptvMessage || docIsVideo);
+  const isImg = !!(msg.message?.imageMessage || msg.message?.stickerMessage);
+  const text = (getTextMessage(msg) || msg.message?.videoMessage?.caption || dm?.caption || '').trim();
+  const sm = text.match(/^\s*#?(\d{5,6})\b/);
+  const serial = sm?.[1] || '';
+  const pm = text.match(/^\s*#?\s*(\+?\d[\d\s-]{5,})/);
+  const inDigits = pm ? videoNormPhone(pm[1]) : '';
+  const p = videoPending;
+  if (!p) {
+    // אין בקשה ממתינה: וידאו מאוחר נבלע בשקט. תמונות של הגיבוי ממשיכות ל-Instinct.
+    return isVid ? true : (inPhone === VIDEO_PRIMARY ? true : false);
+  }
+  const isTarget = !!inPhone && inPhone === p.target;
+  const serialOk = !!serial && serial === p.serial;
+  const phoneOk = !!inDigits && !!p.phoneDigits && inDigits === p.phoneDigits;
+  if (!isTarget && !serialOk && !phoneOk) {
+    // לא התשובה של הבקשה הנוכחית — תמונות/טקסט של הגיבוי ממשיכים ל-Instinct.
+    return isVid ? true : false;
+  }
+  if (isVid) {
+    try {
+      const buf = await downloadMediaRetry(msg, 'video-relay', 4);
+      if (buf && buf.length > 1000) finishVideoPending({ buffer: buf, url: '', caption: text, serial: serial || p.serial, phoneTag: p.phoneTag });
+      else failVideoPending(new Error('קובץ וידאו ריק'));
+    } catch (e) { failVideoPending(e); }
+    return true;
+  }
+  if (isImg) return false; // תמונה אינה תוצאת וידאו — לא לצרוך את הבקשה
+  if (text) {
+    const url = (text.match(/https?:\/\/[^\s]+/i) || [])[0] || '';
+    if (url) {
+      finishVideoPending({ buffer: null, url, caption: text, serial: serial || p.serial, phoneTag: p.phoneTag });
+      return true;
+    }
+    if (/(נכשל|כשל|שגיאה|error|failed|fail|לא ניתן|לא הצלחתי|לא מצליח|unable)/i.test(text)) {
+      failVideoPending(new Error(text.slice(0, 120)));
+      return true;
+    }
+    if (serialOk || phoneOk || inPhone === VIDEO_PRIMARY || !instinctPending) {
+      // שאלה/בקשת הבהרה מהבוט — מעבירים למבקש, ממתינים לתשובתו (לא נספר במגבלה)
+      const isQuestion = /[?？]/.test(text) ||
+        /(?:מה|איזה|איך|האם|אנא|בבקשה|כתוב|כתבי|פרט|תאר|תארי|רוצה|תרצה)/.test(text) ||
+        /(?:what|which|how|please|describe|specify|provide|tell me|would you|do you want)/i.test(text);
+      const shown = (await videoToHebrew(text)).slice(0, 500);
+      if (isQuestion) {
+        p.waitingHuman = true;
+        p.extend?.();
+        await sock.sendMessage(p.chatJid, { text:
+          `🎬 בוט הסרטונים (#${p.phoneTag || p.serial}) שואל:\n${shown}\n\n` +
+          `השב/י כאן — התשובה תועבר אליו ולא תיחשב במגבלה.` }).catch(() => {});
+      } else {
+        await sock.sendMessage(p.chatJid, { text: `🎬 בוט הסרטונים (#${p.phoneTag || p.serial}): ${shown}` }).catch(() => {});
+      }
+      return true;
+    }
+  }
+  return false;
+}
+async function sendVideoResult(sock, chatJid, result, serial) {
+  const tag = result.phoneTag || serial;
+  const caption = `🎬 הסרטון שלך מוכן (בקשה #${tag})`;
+  if (result.buffer) {
+    try {
+      await sock.sendMessage(chatJid, { video: result.buffer, caption });
+      return true;
+    } catch (e) {
+      console.warn('video send fail:', (e?.message || '').slice(0, 120));
+      try {
+        await sock.sendMessage(chatJid, { document: result.buffer, mimetype: 'video/mp4', fileName: `video-${serial}.mp4`, caption });
+        return true;
+      } catch {}
+      await sock.sendMessage(chatJid, { text: `${caption}\n⚠️ הסרטון נוצר אבל שליחתו נכשלה (כנראה גדול מדי).` }).catch(() => {});
+      return false;
+    }
+  }
+  if (result.url) {
+    try {
+      await sock.sendMessage(chatJid, { video: { url: result.url }, caption });
+      return true;
+    } catch {}
+    await sock.sendMessage(chatJid, { text: `${caption}\n${result.url}` }).catch(() => {});
+    return true;
+  }
+  await sock.sendMessage(chatJid, { text: `😢 בוט הסרטונים החזיר תשובה ללא סרטון (#${tag}).` }).catch(() => {});
+  return false;
+}
+/** מזהה בקשת יצירת סרטון בשפה חופשית. מחזיר פרומפט או null. */
+function parseVideoGenRequest(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  let m = t.match(/^(?:צור|תיצור|תצור|תייצר|עשה|תעשה|הכן|תכין|הפק|תפיק)\s+(?:לי\s+|בשבילי\s+|עבורי\s+)?(?:סרטון|וידאו|קליפ|סרט)(?=\s|:|$|-)[\s:\-]*([\s\S]*)$/i);
+  if (m) return `סרטון ${(m[1] || '').trim()}`.trim();
+  m = t.match(/^(?:אני\s+)?(?:רוצה|צריך|צריכה)\s+(?:לי\s+)?(?:סרטון|וידאו|קליפ)(?=\s|:|$|-)[\s:\-]*([\s\S]*)$/i);
+  if (m) return `סרטון ${(m[1] || '').trim()}`.trim();
+  m = t.match(/^(?:צור-סרטון|סרטון-ai|וידאו-ai|video-ai|צור_סרטון)\s*[:\-]?\s*([\s\S]*)$/i);
+  if (m) return `סרטון ${(m[1] || '').trim()}`.trim();
+  m = t.match(/^(?:סרטון|וידאו)\s+(?:פרסום|ai)(?=\s|:|$|-)[\s:\-]*([\s\S]*)$/i);
+  if (m) return `סרטון פרסום ${(m[1] || '').trim()}`.trim();
+  return null;
+}
+/** פקודה מפורשת בלבד (עם קידומת): !צור-סרטון / !סרטון-ai / !צור סרטון ... */
+function parseExplicitVideoCommand(text, usedPrefix) {
+  if (!usedPrefix) return null;
+  const t = String(text || '').trim();
+  if (!t) return null;
+  let m = t.match(/^(?:צור-סרטון|סרטון-ai|וידאו-ai|video-ai)\s*[:\-]?\s*([\s\S]*)$/i);
+  if (m) return `סרטון ${(m[1] || '').trim()}`.trim();
+  m = t.match(/^(?:צור|תיצור|תצור|עשה|תעשה|הכן|תכין)\s+סרטון(?=\s|:|$|-)[\s:\-]*([\s\S]*)$/i);
+  if (m) return `סרטון ${(m[1] || '').trim()}`.trim();
+  return null;
+}
+async function videoToHebrew(text) {
+  const t = String(text || '').trim();
+  if (!t || /[\u0590-\u05FF]/.test(t)) return t;
+  try { return (await translateText(t, 'he')) || t; } catch { return t; }
+}
+async function handleVideoGenRequest(sock, chatJid, msg, prompt) {
+  if (!config.VIDEO_ENABLED) return;
+  const userJid = msg.key.participant || chatJid;
+  const details = String(prompt || '').replace(/^סרטון\s*/i, '').trim();
+  if (!details) {
+    await sock.sendMessage(chatJid, { text:
+      `🎬 *יצירת סרטון AI — איך משתמשים?*\n` +
+      `כתוב למשל: צור לי סרטון פרסום למסעדה איטלקית, אווירה חמה, 15 שניות\n\n` +
+      `⏳ הבקשה תישלח לבוט הסרטונים, והתוצאה תחזור לכאן.` });
+    return;
+  }
+  const db = videoLoad();
+  const uk = videoUserKey(userJid);
+  const unlimited = uk === OWNER_DIGITS; // 👑 הבעלים ללא הגבלה
+  if (!unlimited && (db.users[uk] || 0) >= config.VIDEO_DAILY_PER_USER) {
+    await sock.sendMessage(chatJid, { text: `🎬 הגעת למגבלה היומית (${config.VIDEO_DAILY_PER_USER} בקשת סרטון ביום). נסה שוב מחר.` });
+    return;
+  }
+  if (!unlimited) {
+    const available = VIDEO_BOTS.filter((p) => (db.bots[p] || 0) < config.VIDEO_DAILY_PER_BOT);
+    if (!available.length) {
+      await sock.sendMessage(chatJid, { text: `🎬 כל ניסיונות יצירת הסרטון נוצלו להיום. נסה שוב מחר.` });
+      return;
+    }
+    db.users[uk] = (db.users[uk] || 0) + 1;
+    videoSave(db);
+  }
+  const serial = makeVideoSerial();
+  const phoneTag = videoPhoneTag(userJid) || uk;
+  await sock.sendMessage(chatJid, { text: `🎬 הבקשה נקלטה (#${phoneTag}) — מעביר לבוט הסרטונים, זה יכול לקחת עד 100 דקות...` }).catch(() => {});
+  try {
+    const result = await requestVideoRelay(sock, `סרטון ${details}`, chatJid, serial, phoneTag, unlimited);
+    try { await sendVideoResult(sock, chatJid, result, serial); }
+    finally { markVideoDelivered(); }
+  } catch (e) {
+    markVideoDelivered();
+    const retryHint = unlimited ? 'נסה שוב או נסח בקשה אחרת.' : 'נסה שוב מחר או נסח בקשה אחרת.';
+    await sock.sendMessage(chatJid, { text:
+      `😢 יצירת הסרטון נכשלה (#${phoneTag}): ${(e?.message || '').slice(0, 120)}\n` + retryHint }).catch(() => {});
+  }
+}
+
+/** בקשת סרטון ממשתמש חדש — נשלחת לאישור הבעלים, לא נוצרת עדיין. */
+async function handleVideoApprovalRequest(sock, requesterJid, msg, prompt) {
+  if (!config.VIDEO_ENABLED) return;
+  const details = String(prompt || '').replace(/^סרטון\s*/i, '').trim();
+  if (!details) {
+    await sock.sendMessage(requesterJid, { text:
+      `🎬 *איך מבקשים סרטון?*\n` +
+      `כתוב:\n!צור-סרטון <מה קורה> | <איפה> | <סגנון> | <משך>\n\n` +
+      `לדוגמה:\n!צור-סרטון בחורה נותנת סטירה לבחור | שוק מחנה יהודה | ריאליסטי ומצחיק | 10 שניות\n\n` +
+      `כדאי לכלול: מי/מה בסרטון, הפעולה, המקום, הסגנון והמשך.\n` +
+      `הבקשה תישלח לאישור, והסרטון יישלח אליך אחרי שהבקשה תאושר.` }).catch(() => {});
+    return;
+  }
+  const phoneTag = videoPhoneTag(requesterJid) || instBare(requesterJid);
+  const phoneDigits = videoNormPhone(phoneTag);
+  const db = videoApprovalsLoad();
+  const existing = db.requests.find((r) => r.status === 'pending' && r.phoneDigits === phoneDigits);
+  if (existing) {
+    await sock.sendMessage(requesterJid, { text:
+      `🎬 כבר יש לך בקשה ממתינה לאישור (#${existing.phoneTag}).\n` +
+      `הסרטון יישלח אחרי שהיא תאושר.` }).catch(() => {});
+    return;
+  }
+  const req = {
+    id: `vr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    phoneTag, phoneDigits,
+    userJid: msg.key.participant || requesterJid,
+    chatJid: requesterJid,
+    originalPrompt: details.slice(0, 1000),
+    prompt: `סרטון ${details}`.slice(0, 1000),
+    createdAt: Date.now(),
+    status: 'pending',
+  };
+  db.requests.push(req);
+  videoApprovalsSave(db);
+  await sock.sendMessage(requesterJid, { text:
+    `🎬 בקשת הסרטון נשלחה לאישור (#${phoneTag}).\n` +
+    `הסרטון יישלח אליך אחרי שהבקשה תאושר.\n` +
+    `אם בוט הסרטונים ישאל שאלה — אעביר אותה לכאן, ותוכל/י לענות.` }).catch(() => {});
+  const ownerJid = ownerTargetJid();
+  const text = `🎬 *בקשת סרטון חדשה* (#${phoneTag})\n` +
+    `מאת: ${phoneTag}\n` +
+    `בקשה: ${req.prompt.slice(0, 600)}\n\n` +
+    `לאישור: אשר ${phoneTag}\n` +
+    `לדחייה: דחה ${phoneTag}`;
+  try {
+    await sock.sendMessage(ownerJid, { text });
+  } catch {
+    await sock.sendMessage(`${OWNER_DIGITS}@s.whatsapp.net`, { text }).catch(() => {});
+  }
+  console.log(`🎬 video approval requested: ${phoneTag}`);
+}
+
+/** אשר/דחה בקשת סרטון (רק הבעלים). מחזיר true אם טופל. */
+async function handleVideoApprovalDecision(sock, ownerChat, approve, arg) {
+  const db = videoApprovalsLoad();
+  const pending = db.requests.filter((r) => r.status === 'pending');
+  if (!pending.length) return false;
+  const rawArg = String(arg || '').trim();
+  const phoneMatch = rawArg.match(/\+?\d[\d\s-]{6,}/);
+  const digits = videoNormPhone(phoneMatch ? phoneMatch[0] : '');
+  let target = null;
+  if (digits && digits.length >= 8) {
+    target = pending.find((r) => r.phoneDigits === digits || videoNormPhone(r.phoneTag) === digits) || null;
+  } else if (/^\d{1,2}$/.test(rawArg)) {
+    target = pending[+rawArg - 1] || null;
+  }
+  if (!target) target = pending[pending.length - 1];
+  if (!target) return false;
+  target.status = approve ? 'approved' : 'rejected';
+  target.decidedAt = Date.now();
+  videoApprovalsSave(db);
+  if (!approve) {
+    await sock.sendMessage(ownerChat, { text: `❌ בקשת הסרטון של ${target.phoneTag} נדחתה.` }).catch(() => {});
+    await sock.sendMessage(target.chatJid, { text: `🎬 בקשת הסרטון שלך נדחתה.` }).catch(() => {});
+    return true;
+  }
+  await sock.sendMessage(ownerChat, { text: `✅ בקשת הסרטון של ${target.phoneTag} אושרה — שולח לבוט הסרטונים.` }).catch(() => {});
+  await sock.sendMessage(target.chatJid, { text:
+    `🎬 הבקשה אושרה (#${target.phoneTag}) — הסרטון בהכנה, זה יכול לקחת עד 100 דקות...` }).catch(() => {});
+  try {
+    const serial = makeVideoSerial();
+    const result = await requestVideoRelay(sock, target.prompt, target.chatJid, serial, target.phoneTag, true);
+    try { await sendVideoResult(sock, target.chatJid, result, serial); }
+    finally { markVideoDelivered(); }
+    target.status = 'sent';
+    target.sentAt = Date.now();
+    videoApprovalsSave(db);
+    await sock.sendMessage(ownerChat, { text: `✅ הסרטון של ${target.phoneTag} נשלח.` }).catch(() => {});
+  } catch (e) {
+    markVideoDelivered();
+    target.status = 'failed';
+    target.error = String(e?.message || '').slice(0, 200);
+    target.failedAt = Date.now();
+    videoApprovalsSave(db);
+    await sock.sendMessage(target.chatJid, { text:
+      `😢 יצירת הסרטון נכשלה (#${target.phoneTag}): ${(e?.message || '').slice(0, 120)}` }).catch(() => {});
+    await sock.sendMessage(ownerChat, { text:
+      `⚠️ הסרטון של ${target.phoneTag} נכשל: ${(e?.message || '').slice(0, 120)}` }).catch(() => {});
+  }
+  return true;
+}
+
+const lastMedia = new Map(); // 🎬🎵🎨 פקודת מדיה אחרונה לכל צ'אט — ל"עוד" (remoteJid -> {kind, q, at, buffer?})
+
+/* ---------- 🎬 בוט הורדת סרטונים: חיפוש → 5 אפשרויות → הורדת הנבחר בלבד ---------- */
+const MOVIE_DL_LIMIT = 5;
+const MOVIE_DL_TTL = 10 * 60 * 1000;
+const MOVIE_MAX_SECONDS = 60 * 60; // עד שעה (מעל זה הקובץ גדול מדי גם לקישור)
+const movieDlPending = new Map(); // `${remoteJid}:${sender}` -> { q, items, at }
+const movieDlActive = new Set(); // מפתחות של הורדות פעילות
+// שיחות/ניהול בקבוצת ההורדות — לא מחפשים אותן כסרטון
+const MOVIE_CHAT_NOISE = /^(?:היי|הי|שלום|אהלן|הלו|בוקר\s*טוב|ערב\s*טוב|לילה\s*טוב|תודה(?:\s*רבה)?|סבבה|אוקיי|אוקי|בסדר|חחח+|וואו+|וואוו+|יא|מה\s*קורה|מה\s*נשמע|אחלה|מגניב|יפה|כל\s*הכבוד|נכון|בטל|ביטול|עזרה|תפריט|התחל|מנהלים|מצב|הגדרות|אדמין|admin|help|menu)[\s!.,?]*$/i;
+const movieDlKey = (remoteJid, sender) => `${remoteJid}:${sender}`;
+const fmtMovieDur = (sec) => {
+  const s = Number(sec) || 0;
+  if (!s) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return h
+    ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+    : `${m}:${String(ss).padStart(2, '0')}`;
+};
+
+/** שליחת קובץ הווידאו שהורד (וידאו, ואם נכשל — כמסמך) עם ניסיונות חוזרים. */
+async function deliverMovieFile(sock, remoteJid, buffer, title, prog, mime = 'video/mp4') {
+  const cap = `🎬 ${String(title || '').slice(0, 200)}`;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let sent = false;
+  for (let attempt = 0; attempt < 2 && !sent; attempt++) {
+    try {
+      await sock.sendMessage(remoteJid, { video: buffer, mimetype: mime, caption: cap });
+      sent = true;
+    } catch (e) {
+      console.warn(`🎬 video send ${attempt + 1}/2 fail:`, String((e && e.message) || '').slice(0, 120));
+      if (attempt === 0) await wait(3000);
+    }
+  }
+  if (!sent) {
+    const safeName = String(title || 'video').replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'video';
+    for (let attempt = 0; attempt < 2 && !sent; attempt++) {
+      try {
+        await sock.sendMessage(remoteJid, { document: buffer, mimetype: mime, fileName: `${safeName}.mp4`, caption: cap });
+        sent = true;
+      } catch (e) {
+        console.warn(`🎬 doc send ${attempt + 1}/2 fail:`, String((e && e.message) || '').slice(0, 120));
+        if (attempt === 0) await wait(3000);
+      }
+    }
+  }
+  if (!sent) throw new Error('Media upload failed on all hosts');
+  if (prog?.key) { try { await sock.sendMessage(remoteJid, { delete: prog.key }); } catch {} }
+}
+
+/** קטן — שולחים ישירות; גדול — מעלים ל-Litterbox ושולחים קישור (תקף 72 שעות). */
+async function deliverMovieResult(sock, remoteJid, buffer, title, prog, mime = 'video/mp4') {
+  const waMax = (Number(config.MOVIE_WA_SEND_MB) || 16) * 1024 * 1024;
+  if (buffer.length <= waMax) {
+    await deliverMovieFile(sock, remoteJid, buffer, title, prog, mime);
+    return;
+  }
+  const mb = Math.round((buffer.length / 1048576) * 10) / 10;
+  await sock.sendMessage(remoteJid, { text:
+    `☁️ הקובץ גדול (${mb}MB) — מעלה קישור הורדה זמני (תקף 72 שעות)...` }).catch(() => {});
+  const safeName = String(title || 'video').replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'video';
+  const url = await uploadToLitterbox(buffer, `${safeName}.mp4`, '72h');
+  await sock.sendMessage(remoteJid, { text:
+    `🎬 *${String(title || '').slice(0, 150)}*\n` +
+    `📦 ${mb}MB\n` +
+    `🔗 *קישור הורדה (תקף 72 שעות):*\n${url}` });
+  if (prog?.key) { try { await sock.sendMessage(remoteJid, { delete: prog.key }); } catch {} }
+}
+
+/** חיפוש ביוטיוב → 5 אפשרויות → שמירה לבחירה לפי מספר. */
+async function offerMovieDownloads(sock, remoteJid, sender, q) {
+  const query = String(q || '').trim().slice(0, 100);
+  if (query.length < 2) {
+    await sock.sendMessage(remoteJid, { text:
+      `🎬 *הורדת סרטון — איך משתמשים?*\n\n` +
+      `כתוב: ${config.BOT_PREFIX}סרט ואחריו שם הסרטון.\n` +
+      `הבוט מחזיר 5 אפשרויות, ואז כותבים מספר 1-5 — ומוריד רק את הנבחר.\n\n` +
+      `📌 *דוגמאות:*\n` +
+      `• ${config.BOT_PREFIX}סרט טריילר אווטאר 2\n` +
+      `• ${config.BOT_PREFIX}סרט שיעור היסטוריה\n` +
+      `• ${config.BOT_PREFIX}סרט רקע טבע 4K\n\n` +
+      `🔗 *או פשוט שלח/י קישור* לעמוד/קובץ וידאו מהאתר — והבוט יוריד אותו (כל אתר ש-yt-dlp תומך בו).` });
+    return false;
+  }
+  // 🔗 קישור ישיר (אתר/קובץ) — מורידים ישר בלי רשימת אפשרויות
+  if (/^https?:\/\//i.test(query)) {
+    console.log(`🎬 movie url: ${query.slice(0, 120)}`);
+    const key = movieDlKey(remoteJid, sender);
+    if (movieDlActive.has(key)) {
+      await sock.sendMessage(remoteJid, { text: '⏳ ההורדה הקודמת שלך עדיין רצה — נסה שוב בעוד רגע.' }).catch(() => {});
+      return true;
+    }
+    movieDlActive.add(key);
+    const prog = await sock.sendMessage(remoteJid, { text:
+      `⬇️ מוריד מהקישור...\n🔗 ${query.slice(0, 120)}\n⏳ עד ~${config.MOVIE_MAX_MB}MB, זה יכול לקחת כמה דקות.` }).catch(() => null);
+    try {
+      const { buffer, title, mime } = await Promise.race([
+        downloadVideoFromUrl(query, config.MOVIE_MAX_MB),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 420000)),
+      ]);
+      if (!buffer || buffer.length < 50000) throw new Error('empty');
+      console.log(`🎬 movie url OK: ${Math.round(buffer.length / 1024)}KB ${title || ''}`);
+      await deliverMovieResult(sock, remoteJid, buffer, title || 'video', prog, mime || 'video/mp4');
+    } catch (e) {
+      console.warn('🎬 movie url fail:', String((e && e.message) || '').slice(0, 160));
+      const why = String((e && e.message) || '').slice(0, 90);
+      try {
+        const links = await resolveMediaUrls(query);
+        if (links.length) {
+          await sock.sendMessage(remoteJid, { text: `🔗 קישור הורדה ישיר (נפתח בדפדפן):\n${links.slice(0, 2).join('\n')}` }).catch(() => {});
+        }
+      } catch {}
+      await sock.sendMessage(remoteJid, { text:
+        `😢 לא הצלחתי להוריד מהקישור (${why}).\n` +
+        `• ודא/י שזה קישור ציבורי (לא דורש התחברות)\n` +
+        `• אפשר לשלוח קישור ישיר לקובץ (mp4/mkv) או עמוד וידאו נתמך\n` +
+        `• לחיפוש לפי שם: כתוב/י ${config.BOT_PREFIX}סרט <שם>` }).catch(() => {});
+      if (prog?.key) { try { await sock.sendMessage(remoteJid, { delete: prog.key }); } catch {} }
+    } finally {
+      movieDlActive.delete(key);
+    }
+    return true;
+  }
+  await sendTyping(sock, remoteJid, 1200);
+  const results = await searchYouTube(query, 10).catch(() => []);
+  const ranked = rankVideos(results, query).filter((v) => !v.live);
+  const shortEnough = ranked.filter((v) => !v.seconds || v.seconds <= MOVIE_MAX_SECONDS);
+  const items = shortEnough.slice(0, MOVIE_DL_LIMIT);
+  console.log(`🎬 movie search "${query.slice(0, 60)}": found ${results.length}, short ${shortEnough.length}, showing ${items.length}`);
+  if (!items.length) {
+    const allLong = ranked.length > 0 && ranked.every((v) => v.seconds > MOVIE_MAX_SECONDS);
+    await sock.sendMessage(remoteJid, { text: allLong
+      ? `⏱️ כל התוצאות ל-"${query.slice(0, 60)}" ארוכות מ-60 דקות.\nנסה/י משהו קצר יותר.`
+      : `😢 לא מצאתי סרטון ל-"${query.slice(0, 60)}".\nנסה ניסוח אחר, או ${config.BOT_PREFIX}וידאו <נושא> לקישורים.` });
+    return false;
+  }
+  const key = movieDlKey(remoteJid, sender);
+  movieDlPending.set(key, { q: query, items, at: Date.now() });
+  if (movieDlPending.size > 300) {
+    const cut = Date.now() - MOVIE_DL_TTL;
+    for (const [k, v] of movieDlPending) if (!v || v.at < cut) movieDlPending.delete(k);
+  }
+  const lines = items.map((v, i) => {
+    const d = v.duration || fmtMovieDur(v.seconds);
+    return `${i + 1}. *${String(v.title || '').slice(0, 90)}*${v.author ? ` — ${String(v.author).slice(0, 45)}` : ''}${d ? ` (${d})` : ''}`;
+  });
+  await sock.sendMessage(remoteJid, { text:
+    `🎬 *5 האפשרויות הכי מתאימות ל-"${query.slice(0, 60)}":*\n\n` +
+    lines.join('\n\n') +
+    `\n\n↩️ *כתוב מספר 1-${items.length}* כדי שאוריד רק את הנבחר.\n` +
+    `⏱️ עד 60 דקות · מעל ~16MB יישלח קישור הורדה (72 שעות) · הרשימה בתוקף ל-10 דקות. לביטול — כתוב 0.` });
+  lastMedia.set(remoteJid, { kind: 'video', q: query, at: Date.now() });
+  return true;
+}
+
+/** הורדת האפשרות שנבחרה בלבד ושליחתה. */
+async function downloadMovieChoice(sock, remoteJid, sender, nNum) {
+  const key = movieDlKey(remoteJid, sender);
+  const rec = movieDlPending.get(key);
+  if (!rec) return false;
+  if (Date.now() - rec.at > MOVIE_DL_TTL) {
+    movieDlPending.delete(key);
+    await sock.sendMessage(remoteJid, { text: `⌛ הרשימה פגה — שלח/י שוב: ${config.BOT_PREFIX}סרט <שם>` }).catch(() => {});
+    return true;
+  }
+  const idx = nNum - 1;
+  if (!(idx >= 0 && idx < rec.items.length)) return false;
+  const v = rec.items[idx];
+  movieDlPending.delete(key);
+  console.log(`🎬 movie pick ${nNum}: ${String(v.title || '').slice(0, 80)} (${v.url})`);
+  if (movieDlActive.has(key)) {
+    await sock.sendMessage(remoteJid, { text: '⏳ ההורדה הקודמת שלך עדיין רצה — נסה שוב בעוד רגע.' }).catch(() => {});
+    return true;
+  }
+  movieDlActive.add(key);
+  const prog = await sock.sendMessage(remoteJid, { text:
+    `⬇️ מוריד רק את: *${String(v.title || '').slice(0, 100)}*\n⏳ זה יכול לקחת עד כמה דקות (עד ~${config.MOVIE_MAX_MB}MB)...` }).catch(() => null);
+  try {
+    const { buffer, title } = await Promise.race([
+      downloadVideoFromUrl(v.url, config.MOVIE_MAX_MB),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 420000)),
+    ]);
+    if (!buffer || buffer.length < 50000) throw new Error('empty');
+    console.log(`🎬 movie sent: ${Math.round(buffer.length / 1024)}KB ${title || v.title || ''}`);
+    await deliverMovieResult(sock, remoteJid, buffer, title || v.title, prog, 'video/mp4');
+  } catch (e) {
+    console.warn('🎬 movie dl fail:', String((e && e.message) || '').slice(0, 160));
+    try {
+      const links = await resolveMediaUrls(v.url);
+      if (links.length) {
+        await sock.sendMessage(remoteJid, { text: `🔗 קישור הורדה ישיר (נפתח בדפדפן):\n${links.slice(0, 2).join('\n')}` }).catch(() => {});
+      }
+    } catch {}
+    await sock.sendMessage(remoteJid, { text:
+      `😢 ההורדה נכשלה (${String((e && e.message) || '').slice(0, 90)}).\nנסה סרטון אחר: ${config.BOT_PREFIX}סרט <שם>` }).catch(() => {});
+  } finally {
+    movieDlActive.delete(key);
+  }
+  return true;
+}
+// 🎨 זיהוי בקשת המשך/עריכה לתמונה קודמת (לפני שה-AI מפרש אותה בטעות כבקשה חדשה)
+const IMG_EDIT_START = /^(ערוך|ערכי|תערוך|תערכי|שנה|שני|תשנה|תשני|החלף|החליפי|תחליף|הוסף|הוסיפי|תוסיף|הסר|הסירי|תסיר|תקן|תקני|תתקן|הפוך|הפכי|תהפוך|עשה|עשי|תעשה|תערוך|תוסיפי|שים|תשים|תצייר|צייר|יותר|פחות|שיהיה|שיהיו|יהיה|יהיו|בגדים|רקע|צבע|סגנון|אותו|אותה|אותם|אותן)(?=\s|$)/i;
+const IMG_NEW_REQUEST = /(?:תמונה|ציור|צייר|image|draw).{0,25}(?:של|על|עם)|^(?:תמונה|צייר|ציור|image|draw|תצייר)(?=\s|$)|^(?:עשה|עשי|תעשה|תעשי)\s+לי\s+תמונה/i;
+const IMG_FOLLOWUP_START = /^(יותר|פחות|שיהיה|שיהיו|יהיה|יהיו|אותו|אותה|אותם|אותן|תוסיף|תוסיפי|הוסף|הוסיפי|תעשה\s+(?:שיהיה|שיהיו|שתהיה|שתהיו|אותה|אותו|אותם|אותן|אחת|בתמונה))/i;
+const IMG_CONTEXT_WORD = /תמונה|רקע|צבע|בגד|פנים|אותה|אותו|אותם|אותן|יותר|פחות|שיהיה|בתמונה/i;
+const looksLikeImageEdit = (t) => IMG_EDIT_START.test(String(t || ''));
+const looksLikeImageFollowUp = (t) => {
+  const s = String(t || '').trim();
+  if (!s) return false;
+  if (IMG_FOLLOWUP_START.test(s)) return true;
+  if (!IMG_EDIT_START.test(s)) return false;
+  // מילים שהן גם פקודה בפני עצמן (רקע/צבע/סגנון) — לא עריכה אלא פקודה רגילה
+  if (/^(?:רקע|צבע|סגנון)(?:\s|$)/i.test(s)) return false;
+  return IMG_CONTEXT_WORD.test(s);
+};
+const looksLikeNewImage = (t) => IMG_NEW_REQUEST.test(String(t || ''));
 const mgmtGroupList = new Map(); // 👑 רשימת קבוצות אחרונה לצ'אט ניהול (לבחירה מספרית)
 const tcPending = new Map(); // 🔍 התחברות Truecaller ממתינה ל-OTP (remoteJid -> {phone, loginJson, at})
 const mePending = new Map(); // 📇 חיבור Me ממתין לקוד (remoteJid -> {phone, at})
@@ -798,7 +1560,14 @@ const BOT_DIGITS = '972503651436'; // 📱 המספר של הבוט (מולטי 
 const OWNER_DIGITS = '972555655217'; // 👑 המספר של הבעלים
 try {
   const _lm = JSON.parse(fs.readFileSync(LIDMAP_PATH, 'utf-8'));
-  for (const [k, v] of Object.entries(_lm || {})) if (/^\d+$/.test(k) && /^\d{10,15}$/.test(String(v))) lidPnMap.set(k, String(v));
+  for (const [k, v] of Object.entries(_lm || {})) {
+    if (!/^\d+$/.test(k) || !/^\d{10,15}$/.test(String(v))) continue;
+    lidPnMap.set(k, String(v));
+    // 🤖 שמירת JID ידוע (LID) לשליחה לבוטי-התמונות
+    if (INSTINCT_KNOWN.includes(String(v)) && !instinctSendJids.has(String(v))) {
+      instinctSendJids.set(String(v), `${k}@lid`);
+    }
+  }
 } catch {}
 lidPnMap.set('173225392734366', '972555655217'); // ✅ מיפוי ידוע (נשמר גם לקובץ)
 let _lidSaveT = null;
@@ -854,6 +1623,14 @@ function resolveOwnPhone(jid) {
   const dom = String(jid || '').split('@')[1] || '';
   if (dom === 'lid') return lidPnMap.get(u) || null;
   return svDigits(u);
+}
+/** האם המזהה הוא החשבון של הבוט עצמו (כולל LID / הודעה שנשלחה מהמכשיר הנוסף). */
+function isBotAccount(jid) {
+  try {
+    const raw = String(jid || '').split('@')[0].split(':')[0];
+    if (!raw) return false;
+    return raw === BOT_DIGITS || resolveOwnPhone(jid) === BOT_DIGITS;
+  } catch { return false; }
 }
 const SV_VIEWS = new URL('./status-views.json', import.meta.url);
 const MY_CONTACTS = new URL('./my-contacts.json', import.meta.url);
@@ -954,7 +1731,7 @@ const FEATURES = [
   ['chat', '💬 צ׳אט AI'],
   ['image', '🎨 תמונות'],
   ['song', '🎵 שירים'],
-  ['video', '🎬 חיפוש סרטונים'],
+  ['video', '🎬 סרטונים והורדות'],
   ['sticker', '⭐ סטיקרים'],
   ['tts', '🔊 הקראה ותמלול'],
   ['info', '🌤️ מידע (מזג/חדשות/מטבע)'],
@@ -972,7 +1749,8 @@ const WORD2FEAT = {
   'פוסט': 'image', 'מודעה': 'image', 'פרסומת': 'image', 'באנר': 'image', 'פלייר': 'image',
   'שיר': 'song', 'מוזיקה': 'song', 'נגן': 'song', 'song': 'song', 'music': 'song',
   'תמונה': 'image', 'תמונות': 'image', 'צייר': 'image', 'ציור': 'image', 'תצייר': 'image', 'image': 'image', 'draw': 'image',
-  'וידאו': 'video', 'סרטון': 'video', 'סרטונים': 'video', 'video': 'video', 'יוטיוב': 'video',
+  'וידאו': 'video', 'סרטון': 'video', 'סרטונים': 'video', 'סרט': 'video', 'video': 'video', 'יוטיוב': 'video',
+  'הורד-וידאו': 'video', 'הורד-סרטון': 'video', 'הורד סרטון': 'video', 'download-video': 'video',
   'סטיקר': 'sticker', 'מדבקה': 'sticker', 'sticker': 'sticker', 'אוטו-סטיקר': 'sticker',
   'דבר': 'tts', 'קול': 'tts', 'קריין': 'tts', 'תקריא': 'tts', 'say': 'tts', 'speak': 'tts', 'תמלל': 'tts',
   'מזג': 'info', 'חדשות': 'info', 'news': 'info', 'דולר': 'info', 'ביטקוין': 'info', 'שבת': 'info', 'מניה': 'info', 'stock': 'info', 'מדד': 'info', 'מדדים': 'info', 'קצר': 'info', 'רעידת-אדמה': 'info', 'זיהום-אוויר': 'info', 'תרגם': 'info', 'תרגום': 'info',
@@ -984,9 +1762,10 @@ const WORD2FEAT = {
   'קנה': 'shop', 'קניות': 'shop', 'קנייה': 'shop', 'קני': 'shop', 'aliexpress': 'shop', 'ali': 'shop',
   'אתר': 'site', 'אתרים': 'site', 'website': 'site', 'site': 'site',
   'תזכורת': 'tools', 'תזכורות': 'tools', 'מחק-תזכורת': 'tools', 'סקר': 'tools', 'סקר-תוצאות': 'tools', 'סקר-סגור': 'tools', 'תורנות': 'tools', 'יומולדת': 'tools', 'אירוע': 'tools', 'אירועים': 'tools', 'בוקר': 'tools', 'בריף': 'tools', 'מעקב': 'tools', 'הסר-מעקב': 'tools', 'סכם-צאט': 'tools', 'יומן': 'tools', 'שערים-יומי': 'tools', 'חתוך': 'tools', 'פעילות': 'tools',
+  'עבודה': 'tools', 'עבודות': 'tools', 'jobs': 'tools',
 };
 // פקודות מטא/ניהול — תמיד פעילות (לא חלק מהפיצ'רים)
-const META_ALWAYS = new Set(['עזרה', 'תפריט', 'help', 'menu', 'התחל', 'start', 'מדריך', 'מדריך-מלא', 'guide', 'מצב', 'status', 'id', 'מזהה', 'מנהלים', 'מנהלים-רשימה', 'רשימת-מנהלים', 'אדמין', 'ניהול', 'admin', 'הגדרות', 'הגדרות-ניהול', 'settings', 'מנוע', 'קישורים', 'אנטי-קישורים', 'antilink', 'קישורים-מותרים', 'לינקים-מותרים', 'linkallow', 'שומר', 'שומר-ai', 'aiguard', 'קללות', 'אנטי-קללות', 'סינון-קללות', 'מילה-אסורה', 'מחק-מילה', 'מילים-אסורות', 'רשימה-אסורה', 'ספאם-קשוח', 'אנטי-ספאם', 'ברוכים', 'ברוכים-הבאים', 'welcome', 'חוקים', 'rules', 'תייג', 'כולם', 'tagall', 'אזהרה', 'אזהרות', 'נקה-אזהרות', 'נקה-אזהרה', 'שחרר', 'מושתקים', 'קיק', 'kick', 'קדם', 'promote', 'הורד-ניהול', 'הסר-ניהול', 'demote', 'נעל', 'lock', 'פתח', 'unlock', 'שם', 'תיאור', 'תיאור-קבוצה', 'נקה', 'מחק-תשובה', 'מחק', 'מחק-הודעה', 'delete', 'סטטוס-קבוצה', 'השתק', 'השתק-בוט', 'כבה-בוט', 'כבה', 'הדלק-בוט', 'הדלק', 'mute-bot', 'mute', 'פתח-בוט', 'בוט-פתח', 'unmute-bot', 'unmute', 'פרו', 'pro', 'פרו-בטל', 'פרו-ביטול', 'pro-cancel', 'פרו-מצב', 'מצב-פרו', 'פרו-סטטוס', 'סטטוס-פרו', 'pro-status', 'מנויים', 'מנוי-רשימה', 'pro-list', 'הורד', 'הורד-וידאו', 'download-video', 'קבוצות', 'רשימת-קבוצות', 'groups', 'לקבוצה', 'לקבוצת', 'לקבוץ', 'togroup', 'מערכת', 'סטטוס-מערכת', 'system', 'לוג', 'יומן-מערכת', 'log', 'logs', 'גיבוי', 'גבה', 'backup', 'שם-בוט', 'botname', 'קידומת', 'פרפיקס', 'prefix', 'הפעל-מחדש', 'ריסטארט', 'restart', 'הצטרף', 'הצטרפות', 'join', 'אשר', 'אשר-קבוצה', 'approve', 'בטל-אישור', 'בטל-אישור-קבוצה', 'unapprove', 'עזוב', 'עזוב-קבוצה', 'leave', 'זהה', 'זיהוי', 'מי-זה', 'truecaller', 'tc', 'זהה-התחבר', 'זיהוי-התחבר', 'tc-login', 'זהה-קוד', 'זיהוי-קוד', 'tc-code', 'זהה-נתק', 'זיהוי-נתק', 'tc-logout', 'מי-צפה', 'מי-צפו', 'צפו', 'צפיות', 'סטטוס-צפיות', 'מי-ראה', 'status-views', 'נקה-צפיות', 'אפס-צפיות', 'נקה-צפיה', 'אנשי-קשר', 'רשימת-קשר', 'my-contacts', 'מי-שמר-אותי', 'מי-שמר', 'בדיקת-שמירה', 'בדוק-שמירה', 'בדוק-שמר', 'סריקה-עמוקה', 'סריקה-מעמיקה', 'deep-scan', 'אמור', 'אמור-בניסוי', 'כבוט', 'בתור-הבוט', 'as-bot', 'ערוץ-עוקבים', 'ערוץ', 'עוקבים', 'עוקבי-ערוץ', 'channel', 'me-התחבר', 'me-חבר', 'me-login', 'me-קוד', 'me-code', 'me-נתק', 'me-logout', 'me-מצב', 'me-סטטוס', 'me-status', 'me-זהה', 'me-זיהוי', 'me-search']);
+const META_ALWAYS = new Set(['עזרה', 'תפריט', 'help', 'menu', 'התחל', 'start', 'מדריך', 'מדריך-מלא', 'guide', 'מצב', 'status', 'id', 'מזהה', 'מנהלים', 'מנהלים-רשימה', 'רשימת-מנהלים', 'אדמין', 'ניהול', 'admin', 'הגדרות', 'הגדרות-ניהול', 'settings', 'מנוע', 'קישורים', 'אנטי-קישורים', 'antilink', 'סטיקרים', 'אנטי-סטיקר', 'antisticker', 'קישורים-מותרים', 'לינקים-מותרים', 'linkallow', 'שומר', 'שומר-ai', 'aiguard', 'קללות', 'אנטי-קללות', 'סינון-קללות', 'מילה-אסורה', 'מחק-מילה', 'מילים-אסורות', 'רשימה-אסורה', 'ספאם-קשוח', 'אנטי-ספאם', 'ברוכים', 'ברוכים-הבאים', 'welcome', 'חוקים', 'rules', 'תייג', 'כולם', 'tagall', 'אזהרה', 'אזהרות', 'נקה-אזהרות', 'נקה-אזהרה', 'שחרר', 'מושתקים', 'קיק', 'kick', 'קדם', 'promote', 'הורד-ניהול', 'הסר-ניהול', 'demote', 'נעל', 'lock', 'פתח', 'unlock', 'שם', 'תיאור', 'תיאור-קבוצה', 'נקה', 'מחק-תשובה', 'מחק', 'מחק-הודעה', 'delete', 'סטטוס-קבוצה', 'השתק', 'השתק-בוט', 'כבה-בוט', 'כבה', 'הדלק-בוט', 'הדלק', 'mute-bot', 'mute', 'אוטו-תמלול', 'תמלול-בלבד', 'פתח-בוט', 'בוט-פתח', 'unmute-bot', 'unmute', 'פרו', 'pro', 'פרו-בטל', 'פרו-ביטול', 'pro-cancel', 'פרו-מצב', 'מצב-פרו', 'פרו-סטטוס', 'סטטוס-פרו', 'pro-status', 'מנויים', 'מנוי-רשימה', 'pro-list', 'הורד', 'קבוצות', 'רשימת-קבוצות', 'groups', 'לקבוצה', 'לקבוצת', 'לקבוץ', 'togroup', 'מערכת', 'סטטוס-מערכת', 'system', 'לוג', 'יומן-מערכת', 'log', 'logs', 'גיבוי', 'גבה', 'backup', 'שם-בוט', 'botname', 'קידומת', 'פרפיקס', 'prefix', 'הפעל-מחדש', 'ריסטארט', 'restart', 'הצטרף', 'הצטרפות', 'join', 'אשר', 'אשר-קבוצה', 'approve', 'בטל-אישור', 'בטל-אישור-קבוצה', 'unapprove', 'עזוב', 'עזוב-קבוצה', 'leave', 'זהה', 'זיהוי', 'מי-זה', 'truecaller', 'tc', 'זהה-התחבר', 'זיהוי-התחבר', 'tc-login', 'זהה-קוד', 'זיהוי-קוד', 'tc-code', 'זהה-נתק', 'זיהוי-נתק', 'tc-logout', 'מי-צפה', 'מי-צפו', 'צפו', 'צפיות', 'סטטוס-צפיות', 'מי-ראה', 'status-views', 'נקה-צפיות', 'אפס-צפיות', 'נקה-צפיה', 'אנשי-קשר', 'רשימת-קשר', 'my-contacts', 'מי-שמר-אותי', 'מי-שמר', 'בדיקת-שמירה', 'בדוק-שמירה', 'בדוק-שמר', 'סריקה-עמוקה', 'סריקה-מעמיקה', 'deep-scan', 'אמור', 'אמור-בניסוי', 'כבוט', 'בתור-הבוט', 'as-bot', 'ערוץ-עוקבים', 'ערוץ', 'עוקבים', 'עוקבי-ערוץ', 'channel', 'me-התחבר', 'me-חבר', 'me-login', 'me-קוד', 'me-code', 'me-נתק', 'me-logout', 'me-מצב', 'me-סטטוס', 'me-status', 'me-זהה', 'me-זיהוי', 'me-search']);
 const featLabel = (f) => (FEATURES.find((x) => x[0] === f) || [])[1] || f;
 function isFeatureOn(gd, feat) {
   return ((gd && gd.features) || {})[feat] !== false;
@@ -1088,9 +1867,9 @@ function trackBotSent(res) {
   } catch {}
   return res;
 }
-function pushHistory(jid, role, content) {
+function pushHistory(jid, role, content, sender = '') {
   const arr = chatHistory.get(jid) || [];
-  arr.push({ role, content: content.slice(0, 1000) });
+  arr.push({ role, content: content.slice(0, 1000), sender: role === 'user' ? String(sender || '').slice(0, 40) : '' });
   while (arr.length > 10) arr.shift();
   chatHistory.set(jid, arr);
 }
@@ -1196,15 +1975,20 @@ function donateFooter() {
 }
 
 // --- חיפוש אינטרנט אוטומטי בשאלה (מחליף את הפקודה הנפרדת שהוסרה) ---
-const QUESTION_START = /^(מי|מה|מתי|איפה|למה|איך|כמה|האם|איזה|איזו|היכן|תגיד|ספר|תן|תסביר|הסבר|הבא|חפש|חשוב על)\s/;
-const NEWSY_WORDS = ['חדשות', 'היום', 'אתמול', 'מחר', '2025', '2026', 'מזג', 'תוצאות', 'ליגה',
-  'נבחרת', 'בחירות', 'מחיר', 'עדכון', 'מצב', 'מעודכן'];
+// 🔎 חיפוש רשת רק לשאלות עובדתיות/חדשותיות — לא לשיחת חולין.
+const CASUAL_ONLY = /^(?:מה\s+(?:נשמע|קורה|המצב|איתך|עניינים)|מה\s+איתך|איך\s+(?:אתה|את|הולך|מרגיש|עובר)|הכל\s+(?:בסדר|טוב)|בסדר|סבבה|אוקיי|טוב|כן|לא|אחלה|תודה|מה|למה|איך|מי|מתי|איפה|כמה)\s*[?!.…]*$/i;
+const CURRENT_WORDS = ['חדשות', 'היום', 'אתמול', 'מחר', 'עכשיו', 'השבוע', 'החודש', '2025', '2026', '2027',
+  'מזג', 'תוצאות', 'ליגה', 'נבחרת', 'בחירות', 'מחיר', 'עדכון', 'מעודכן', 'שער', 'בורסה',
+  'מניה', 'מניות', 'דולר', 'יורו', 'ביטקוין', 'קריפטו', 'מבזק'];
 function needsWebSearch(q) {
   const s = (q || '').trim();
-  if (s.length < 4 || s.length > 300) return false;
-  if (s.includes('?')) return true;
-  if (QUESTION_START.test(s)) return true;
-  return NEWSY_WORDS.some((w) => s.includes(w));
+  if (s.length < 6 || s.length > 300) return false;
+  if (CASUAL_ONLY.test(s)) return false;
+  if (CURRENT_WORDS.some((w) => s.includes(w))) return true;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return false;
+  if (!/\?/.test(s)) return false;
+  return !/(?:אתה|אני|אנחנו|שלי|שלך|אותי|אותך)/i.test(s);
 }
 async function enrichWithSearch(q) {
   if (!needsWebSearch(q)) return q;
@@ -1387,15 +2171,172 @@ async function maybeUpdateYtDlp() {
   }
 }
 
+// --- 📊 סקר בעלים מהפרטי: שידור לכל הקבוצות + תוצאות כעבור 24 שעות ---
+const BROADCAST_POLLS_PATH = new URL('./broadcast-polls.json', import.meta.url);
+const BROADCAST_POLL_TTL_MS = 24 * 60 * 60 * 1000;
+let broadcastPollsRunning = false;
+
+function loadBroadcastPolls() {
+  try {
+    const db = JSON.parse(fs.readFileSync(BROADCAST_POLLS_PATH, 'utf-8'));
+    if (!Array.isArray(db.polls)) db.polls = [];
+    return db;
+  } catch { return { polls: [] }; }
+}
+function saveBroadcastPolls(db) {
+  try { fs.writeFileSync(BROADCAST_POLLS_PATH, JSON.stringify(db)); } catch {}
+}
+/** קבוצות שהבוט פועל בהן (ALLOWED_GROUPS, ואם אין — כל הקבוצות שהבוט חבר בהן). */
+async function broadcastPollTargets(sock) {
+  const allowed = [...new Set((config.ALLOWED_GROUPS || []).filter((j) => /@g\.us$/.test(j)))];
+  if (allowed.length) return allowed;
+  try {
+    const all = await sock.groupFetchAllParticipating();
+    return Object.keys(all || {}).filter((j) => /@g\.us$/.test(j));
+  } catch { return []; }
+}
+/** שולח סקר לכל הקבוצות וקובע שליחת תוצאות לבעלים בעוד 24 שעות. */
+async function broadcastPollToGroups(sock, ownerJid, question, options) {
+  question = String(question || '').trim().slice(0, 200);
+  options = (options || []).map((o) => String(o || '').trim()).filter(Boolean).slice(0, 6);
+  if (!question || options.length < 2) {
+    await sock.sendMessage(ownerJid, { text: `📊 צריך שאלה + 2 אפשרויות עם |.` }).catch(() => {});
+    return;
+  }
+  const targets = await broadcastPollTargets(sock);
+  if (!targets.length) {
+    await sock.sendMessage(ownerJid, { text: `😢 לא נמצאו קבוצות לשלוח בהן את הסקר.` }).catch(() => {});
+    return;
+  }
+  const id = `bp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const startedAt = Date.now();
+  let sent = 0;
+  for (const jid of targets) {
+    try {
+      const gd = gdata(jid);
+      gd.polls.forEach((p) => { p.open = false; });
+      const poll = newPoll(question, options);
+      poll.broadcastId = id;
+      gd.polls.push(poll);
+      await sock.sendMessage(jid, { text: `📊 *סקר חדש!*\n\n${pollResults(poll)}` });
+      sent++;
+    } catch (e) {
+      console.warn(`📊 poll broadcast fail ${jid}:`, (e?.message || '').slice(0, 100));
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  saveStore();
+  const db = loadBroadcastPolls();
+  db.polls.push({
+    id, question, options, ownerJid, targets, startedAt,
+    dueAt: startedAt + BROADCAST_POLL_TTL_MS, sent, resultsSent: false,
+  });
+  saveBroadcastPolls(db);
+  await sock.sendMessage(ownerJid, {
+    text: `✅ הסקר נשלח ל-*${sent}/${targets.length}* קבוצות.\n⏳ התוצאות יישלחו לכאן אוטומטית בעוד 24 שעות.`,
+  }).catch(() => {});
+}
+/** בשלות: סוגר את הסקרים בקבוצות ושולח לבעלים סיכום תוצאות. */
+async function checkBroadcastPolls(sock) {
+  if (broadcastPollsRunning) return;
+  broadcastPollsRunning = true;
+  try {
+    const db = loadBroadcastPolls();
+    const due = db.polls.filter((p) => !p.resultsSent && Date.now() >= (p.dueAt || 0));
+    if (!due.length) return;
+    for (const bp of due) {
+      let out = `📊 *תוצאות הסקר*\n*${bp.question}*\n`;
+      let grand = 0;
+      for (const jid of bp.targets || []) {
+        let gd = null;
+        try { gd = gdata(jid); } catch { continue; }
+        const poll = (gd.polls || []).find((p) => p.broadcastId === bp.id);
+        if (!poll) continue;
+        poll.open = false;
+        const counts = poll.options.map(() => 0);
+        for (const v of Object.values(poll.votes || {})) {
+          const i = poll.options.indexOf(v);
+          if (i >= 0) counts[i]++;
+        }
+        const total = counts.reduce((a, b) => a + b, 0);
+        grand += total;
+        const subject = (gd.subject || '').trim() || jid.split('@')[0];
+        out += `\n🏷️ *${subject}* — ${total} מצביעים\n`;
+        poll.options.forEach((o, i) => { out += `   ${i + 1}. ${o} — *${counts[i]}*\n`; });
+      }
+      out += `\n🗳️ סה״כ הצבעות: *${grand}*`;
+      try {
+        await sock.sendMessage(bp.ownerJid, { text: out });
+        bp.resultsSent = true;
+        bp.resultsSentAt = Date.now();
+        console.log(`📊 poll results sent: ${bp.question} (${grand} votes)`);
+      } catch (e) {
+        console.warn('📊 poll results send fail:', (e?.message || '').slice(0, 100));
+        bp.resultsAttempts = (bp.resultsAttempts || 0) + 1;
+        if (bp.resultsAttempts >= 10) bp.resultsSent = true;
+      }
+    }
+    saveStore();
+    saveBroadcastPolls(db);
+  } finally {
+    broadcastPollsRunning = false;
+  }
+}
+
+let jobsTickBusy = false;
+let jobsNextCheckAt = 0;
+async function jobsTick(sock) {
+  if (jobsTickBusy) return;
+  const jid = (config.JOBS_GROUP || '').trim();
+  if (!jid || !config.JOBS_AUTO || !jobsAutoOn()) return;
+  const now = new Date();
+  const [startH, endH] = (config.JOBS_ACTIVE_HOURS && config.JOBS_ACTIVE_HOURS.length) ? config.JOBS_ACTIVE_HOURS : [8, 23];
+  if (now.getHours() < startH || now.getHours() >= endH) return;
+  if (Date.now() < jobsNextCheckAt) return;
+  const intervalMs = Math.max(5, config.JOBS_CHECK_MINUTES || 20) * 60000;
+  jobsNextCheckAt = Date.now() + intervalMs;
+  try {
+    const gd = gdata(jid);
+    if (gd.botMutedUntil && Date.now() < gd.botMutedUntil) return;
+  } catch {}
+  jobsTickBusy = true;
+  try {
+    const { jobs } = await getNewJobs({ limit: Math.max(1, config.JOBS_MAX_PER_CHECK || 3) });
+    if (jobs.length) {
+      const { text, included } = formatJobsSingle(jobs, 'עבודות חדשות', 3800);
+      if (text && included.length) {
+        await sock.sendMessage(jid, { text });
+        recordPosted(included);
+        console.log(`💼 jobs new -> ${jid}: ${included.length} משרות בהודעה אחת`);
+      }
+    }
+  } catch (e) {
+    jobsNextCheckAt = Date.now() + 5 * 60000;
+    console.warn('jobs tick fail:', (e && e.message || '').slice(0, 120));
+  } finally {
+    jobsTickBusy = false;
+  }
+}
+
 async function schedulerTick() {
   try {
     const sock = activeSock;
     if (!sock) return;
+    // 🧹 ניקוי זיכרון מדיה זמני (כולל תמונות אחרונות לעריכה) — מונע גדילה בלתי מוגבלת
+    try {
+      for (const [jid, lm] of lastMedia) {
+        if (!lm || !lm.at || Date.now() - lm.at > 60 * 60000) lastMedia.delete(jid);
+      }
+    } catch {}
+    checkBroadcastPolls(sock).catch(() => {});
+    jobsTick(sock).catch(() => {});
+    adsTick(sock).catch(() => {}); // 📣 פרסומות מתוזמנות לקבוצות המסומנות
     maybeUpdateYtDlp().catch(() => {});
     refreshProLists(sock).catch(() => {}); // 💎 רענון מטמון מנויים (כל 5 דקות בפועל)
     if (!globalThis.__instinctResolved) {
       globalThis.__instinctResolved = true;
       resolveInstinct(sock).catch(() => {});
+      resolveVideoBots(sock).catch(() => {});
     }
     // 🕯️ מצב שבת: בדיקת מעברים (כניסה/יציאה) פעם בדקה
     try {
@@ -1507,9 +2448,15 @@ async function schedulerTick() {
       try { ops = JSON.parse(fs.readFileSync(opsPath, 'utf-8')); } catch {}
       if (Array.isArray(ops) && ops.length) {
         try { fs.unlinkSync(opsPath); } catch {}
-        const ADMIN_TOGGLES = ['antilink', 'antispam', 'anticurse', 'aiguard', 'welcome', 'autoSticker', 'autoTranslate', 'morning', 'rates', 'brief'];
+        const ADMIN_TOGGLES = ['antilink', 'antispam', 'anticurse', 'antiSticker', 'aiguard', 'welcome', 'autoSticker', 'autoTranslate', 'autoTranscribe', 'onlyTranscribe', 'morning', 'rates', 'brief'];
         for (const op of ops) {
           try {
+            if (op && op.op === 'sendAd') {
+              sendAdNow(sock, { force: !!op.force })
+                .then((r) => console.log(`📣 panel sendAd: ${r.ok ? `${r.sent}/${r.total}` : r.error}`))
+                .catch(() => {});
+              continue;
+            }
             if (!op || !op.jid) continue;
             const gd = gdata(op.jid);
             if (op.op === 'toggle' && ADMIN_TOGGLES.includes(op.key)) {
@@ -1555,6 +2502,7 @@ async function schedulerTick() {
           const buf = fs.readFileSync(new URL(`./stickers-daily/${files[Math.floor(Math.random() * files.length)]}`, import.meta.url));
           for (const jid of config.ALLOWED_GROUPS) {
             try {
+              if (gdata(jid).toggles.onlyTranscribe) continue;
               await sock.sendMessage(jid, { sticker: buf }).catch(() => {});
             } catch {}
             await new Promise((r) => setTimeout(r, 1500));
@@ -1628,7 +2576,7 @@ async function schedulerTick() {
         }
       }
       // 🎂 ימי הולדת (בדיקה כל בוקר 9:00)
-      if (hour >= 9 && gd.lastBirth !== today) {
+      if (!gd.toggles.onlyTranscribe && hour >= 9 && gd.lastBirth !== today) {
         gd.lastBirth = today;
         saveStore();
         const todays = todayBirthdays(jid);
@@ -1752,8 +2700,9 @@ async function start() {
         skipAd = proLids.has(bare) || isProCached(bare) ||
           !!(lidPhoneCache.get(toJid) && proPhones.has(lidPhoneCache.get(toJid)));
       }
-      const header = skipAd ? '' : proHeader();
-      const footer = donateFooter();
+      const isJobsGroup = !!(config.JOBS_GROUP && toJid === config.JOBS_GROUP);
+      const header = (skipAd || isJobsGroup) ? '' : proHeader();
+      const footer = isJobsGroup ? '' : donateFooter();
       const content = args[1];
       if (content && typeof content === 'object' && !content.poll) {
         if (typeof content.text === 'string') {
@@ -2006,6 +2955,121 @@ async function start() {
     } catch {}
   });
 
+/* ---------- 🎵 יצירת שיר/מנגינה עם Suno MCP (שפה חופשית) ---------- */
+const sunoUsage = new Map();
+function sunoQuotaLeft(jid) {
+  const limit = config.SUNO_DAILY_PER_USER;
+  if (!limit) return Infinity;
+  const d = new Date();
+  const key = `${jid}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  const used = sunoUsage.get(key) || 0;
+  return Math.max(0, limit - used);
+}
+function sunoQuotaUse(jid) {
+  const limit = config.SUNO_DAILY_PER_USER;
+  if (!limit) return;
+  const d = new Date();
+  const key = `${jid}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  sunoUsage.set(key, (sunoUsage.get(key) || 0) + 1);
+  if (sunoUsage.size > 2000) sunoUsage.clear();
+}
+
+async function handleSunoCreation(sock, remoteJid, msg, req) {
+  const sender = msg.key.participant || remoteJid;
+  const isInstrumental = req.kind === 'instrumental';
+  if (!req.lyrics && !req.prompt && !req.style) {
+    await sock.sendMessage(remoteJid, { text:
+      isInstrumental
+        ? `🎼 *איזו מנגינה תרצה?*\n\nכתוב/י למשל: "תעשה לי מנגינה רגועה של פסנתר" או "מנגינה אנרגטית בסגנון מזרחי".`
+        : `🎵 *על מה השיר?*\n\nאפשר לכתוב:\n• "תעשה שיר על הים" (Suno יכתוב מילים)\n• "תעשה שיר עם המילים: ..." (המילים שלך)\n• "שיר בסגנון פופ על חברות"` });
+    return;
+  }
+  if (!sunoHasAuth()) {
+    await sock.sendMessage(remoteJid, { text: SUNO_SETUP_HELP });
+    return;
+  }
+  if (sunoQuotaLeft(sender) <= 0) {
+    await sock.sendMessage(remoteJid, { text: `🎵 הגעת למכסת יצירת השירים היומית (${config.SUNO_DAILY_PER_USER}). נסה/י שוב מחר.` });
+    return;
+  }
+
+  const ack = isInstrumental
+    ? `🎼 יוצר לך מנגינה עם Suno...\nזה יכול לקחת 1–4 דקות ⏳`
+    : `🎵 יוצר לך שיר עם Suno${req.lyrics ? ' לפי המילים שלך' : ''}...\nזה יכול לקחת 1–4 דקות ⏳`;
+  await sock.sendMessage(remoteJid, { text: ack });
+
+  const progress = setInterval(() => {
+    sock.sendPresenceUpdate('composing', remoteJid).catch(() => {});
+  }, 20000);
+  try { await sock.presenceSubscribe(remoteJid); } catch {}
+  try { await sock.sendPresenceUpdate('composing', remoteJid); } catch {}
+
+  try {
+    const out = await sunoGenerate(req, {
+      timeoutMs: config.SUNO_TIMEOUT_MS,
+      onStatus: ({ attempt }) => {
+        if (attempt === 4) {
+          sock.sendMessage(remoteJid, { text: '🎧 עדיין עובד על זה... Suno לפעמים לוקח כמה דקות 🎶' }).catch(() => {});
+        }
+      },
+    });
+    sunoQuotaUse(sender);
+
+    const title = String(out.title || req.title || (isInstrumental ? 'מנגינה עם Suno' : 'שיר עם Suno')).slice(0, 80);
+    const lines = [`${isInstrumental ? '🎼' : '🎵'} *${title}*`];
+    if (out.duration) lines.push(`⏱️ ${Math.round(out.duration)} שניות`);
+    if (req.style) lines.push(`🎸 סגנון: ${req.style.slice(0, 100)}`);
+    lines.push('✨ נוצר עם Suno');
+    const caption = lines.join('\n');
+
+    let sent = false;
+    if (out.buffer && out.buffer.length > 5000) {
+      try {
+        await sock.sendMessage(remoteJid, { audio: out.buffer, mimetype: 'audio/mpeg', fileName: `${title.replace(/[\\/:*?"<>|]/g, '').slice(0, 60)}.mp3` });
+        sent = true;
+        try {
+          const g = await import('./gallery-log.js');
+          g.logCreationWithFile({ type: 'music', prompt: (req.prompt || req.lyrics || title).slice(0, 300), buffer: out.buffer, ext: 'mp3', source: 'whatsapp' });
+        } catch {}
+      } catch (e) {
+        console.warn('suno audio send fail:', (e?.message || '').slice(0, 120));
+      }
+    }
+    if (!sent && out.url) {
+      try {
+        await sock.sendMessage(remoteJid, { audio: { url: out.url }, mimetype: 'audio/mpeg' });
+        sent = true;
+      } catch {}
+    }
+    if (sent) {
+      await sock.sendMessage(remoteJid, { text: caption }).catch(() => {});
+    } else if (out.url) {
+      await sock.sendMessage(remoteJid, { text: `${caption}\n\n🔗 הקישור לשיר:\n${out.url}` });
+    } else {
+      await sock.sendMessage(remoteJid, { text: '😢 השיר נוצר אבל לא הצלחתי לשלוח את הקובץ. נסה/י שוב בעוד דקה.' });
+    }
+  } catch (e) {
+    const m = (e && e.message) || '';
+    console.warn('suno create fail:', m.slice(0, 200));
+    if (/SUNO_AUTH/.test(m)) {
+      await sock.sendMessage(remoteJid, { text: SUNO_SETUP_HELP });
+    } else if (/SUNO_OAUTH|SUNO_TOKEN|SUNO_401/.test(m)) {
+      await sock.sendMessage(remoteJid, { text: '🔑 החיבור ל-Suno פג. הבעלים צריך/ה להריץ שוב: `npm run suno-login`' });
+    } else if (/credit|quota|insufficient|payment|402|429/i.test(m)) {
+      await sock.sendMessage(remoteJid, { text: '💳 נגמרו הקרדיטים ב-Suno או שהבקשה נחסמה. נסה/י שוב מאוחר יותר.' });
+    } else if (/SUNO_DOWNLOAD/.test(m)) {
+      await sock.sendMessage(remoteJid, { text: '😢 השיר נוצר ב-Suno אבל הורדת הקובץ נכשלה. נסה/י שוב בעוד דקה.' });
+    } else if (/SUNO_NO_AUDIO|SUNO_TIMEOUT|SUNO_TOOL/.test(m)) {
+      await sock.sendMessage(remoteJid, { text: `😢 Suno לא החזיר שיר מוכן (${m.slice(0, 120)}).\nנסה/י שוב עם תיאור קצר יותר.` });
+    } else {
+      await sock.sendMessage(remoteJid, { text: `😢 יצירת השיר נכשלה (${m.slice(0, 120)}). נסה/י שוב בעוד דקה.` });
+    }
+  } finally {
+    clearInterval(progress);
+    try { await sock.sendPresenceUpdate('paused', remoteJid); } catch {}
+  }
+}
+
 // טיפול בהודעה יחידה — הוצא מלולאת ה-upsert כדי לאפשר מקביליות (כל ה-continue המקוריים הפכו ל-return)
 async function handleChatMessage(sock, botJid, msg) {
       try {
@@ -2023,6 +3087,7 @@ async function handleChatMessage(sock, botJid, msg) {
             const _selfOk =
               /^(כבה-בוט|כבה בוט|הדלק-בוט|הדלק בוט|השתק-בוט|השתק בוט|פתח-בוט|בוט-פתח)\b/i.test(_t0) ||
               /^(מי-שמר-אותי|מי-שמר|בדיקת-שמירה|סריקה-עמוקה|deep-scan|בדוק-שמירה|בדוק-שמר|מי-צפה|סטטוס-צפיות|נקה-צפיות|אנשי-קשר|me-התחבר|me-חבר|me-login|me-קוד|me-code|me-מצב|me-סטטוס|me-זהה|me-זיהוי|אמור|אמור-בניסוי)\b/i.test(_t0n) ||
+              /^(עבודה|עבודות|jobs)(?:-|\s|$)/i.test(_t0n) ||
               (_mpFresh && _mp0.stage === 'code' && /^\d{4,8}$/.test(_t0)) ||
               (_mpFresh && _mp0.stage === 'phone' && /^\+?[\d\s\-()]{9,16}$/.test(_t0));
             if (!_selfOk) return;
@@ -2050,9 +3115,51 @@ async function handleChatMessage(sock, botJid, msg) {
             }
           }
         }
+        // 🎬 תשובות בוט-הסרטונים — לפני Instinct, כדי שווידאו לא ייבלע כממסר תמונות
+        if (config.VIDEO_ENABLED && !isGroup && !msg.key.fromMe && isVideoBotJid(remoteJid)) {
+          try {
+            if (await tryHandleVideoBotMessage(sock, msg, remoteJid)) return;
+          } catch (e) {
+            console.warn('video relay inbound fail:', (e?.message || '').slice(0, 120));
+          }
+        }
+        // 🎬 תשובת המשתמש לשאלת בוט-הסרטונים — מועברת אליו ולא נספרת במגבלה
+        if (config.VIDEO_ENABLED && !msg.key.fromMe && videoPending && videoPending.waitingHuman && videoPending.chatJid === remoteJid) {
+          const senderJid = msg.key.participant || remoteJid;
+          const senderDigits = videoNormPhone(videoUserKey(senderJid));
+          const isRequester = !!senderDigits && senderDigits === videoPending.phoneDigits;
+          const answerRaw = (getTextMessage(msg) || '').trim();
+          const hasImg = !!msg.message?.imageMessage;
+          if (isRequester && (answerRaw || hasImg)) {
+            try {
+              const vp = videoPending;
+              const tag = vp.phoneTag || vp.serial;
+              const answerClean = answerRaw.replace(/^[!./]/, '').trim();
+              if (hasImg) {
+                const buf = await downloadMediaRetry(msg, 'video-answer', 3);
+                await sock.sendMessage(vp.sendJid, {
+                  image: buf,
+                  caption: `#${tag} ${answerClean}`.trim().slice(0, 900),
+                });
+              } else {
+                await sock.sendMessage(vp.sendJid, { text: `#${tag} ${answerClean}`.slice(0, 900) });
+              }
+              vp.waitingHuman = false;
+              vp.extend?.();
+              await sock.sendMessage(remoteJid, { text: `🎬 התשובה הועברה לבוט הסרטונים — ממשיך בעבודה (#${tag}).` }).catch(() => {});
+              return;
+            } catch (e) {
+              console.warn('video answer relay fail:', (e?.message || '').slice(0, 120));
+            }
+          }
+        }
         // 🤖 תשובות Instinct (ממסר תמונות): לכידת תמונה לבקשה ממתינה, שאלות טקסט מועברות למבקש
         if (!isGroup && isInstinctJid(remoteJid) && !msg.key.fromMe) {
           instinctSendJid = remoteJid; // זוכרים מאיפה הוא עונה — לשם שולחים
+          const inPhone = instinctPhone(remoteJid);
+          if (inPhone) instinctSendJids.set(inPhone, remoteJid);
+          // תשובה מהבוט השני בזמן שממתינים לראשון — מתעלמים, בלי לענות לו
+          if (instinctPending && instinctPending.target && inPhone && inPhone !== instinctPending.target) return;
           if (instinctPending) {
             if (msg.message?.imageMessage || msg.message?.stickerMessage) {
               try {
@@ -2093,7 +3200,9 @@ async function handleChatMessage(sock, botJid, msg) {
                 if (instinctQTimer.unref) instinctQTimer.unref();
               }
             }
-          } else if ((msg.message?.imageMessage || msg.message?.stickerMessage) && instinctLate && Date.now() - instinctLate.at < 15 * 60 * 1000) {
+          } else if ((msg.message?.imageMessage || msg.message?.stickerMessage) && instinctLate &&
+                     Date.now() - instinctLate.at < 15 * 60 * 1000 &&
+                     (!instinctLate.target || !inPhone || inPhone === instinctLate.target)) {
             // תמונה שהגיעה אחרי טיימאאוט — מוסרים באיחור במקום לזרוק
             const late = instinctLate;
             instinctLate = null;
@@ -2136,11 +3245,69 @@ async function handleChatMessage(sock, botJid, msg) {
 
         const rawText = getTextMessage(msg);
         const quoted = getQuotedMessage(msg);
+        const quotedText = (quoted?.conversation || quoted?.extendedTextMessage?.text ||
+          quoted?.imageMessage?.caption || quoted?.videoMessage?.caption || '').slice(0, 300);
+        // 🧵 שרשור אמיתי: ההודעות האחרונות בצ'אט (כולל של אחרים), כדי להבין "אותו/אותם/יותר ריאליסטי/מה שהוא אמר".
+        // lazy — נקרא רק כשיש באמת שאלת AI, כדי לא לקרוא את הקובץ בכל הודעה.
+        let _threadCtx = null;
+        const getThreadContext = () => {
+          if (_threadCtx !== null) return _threadCtx;
+          try {
+            const botNoise = /^(?:בוט\s+הסרטים|תמלולון|מולטי\s+בוט|בוט\s+AI)/i;
+            const lines = recentChat(remoteJid, 14).filter((l) => l && l.text && !botNoise.test(l.name || ''));
+            const _curTxt = String(rawText || '').trim().slice(0, 300);
+            if (lines.length && String(lines[lines.length - 1].text || '').trim() === _curTxt) lines.pop();
+            _threadCtx = lines.slice(-10).map((l) => `${l.name || 'משתמש'}: ${String(l.text).slice(0, 220)}`).join('\n').slice(0, 1600);
+          } catch { _threadCtx = ''; }
+          return _threadCtx;
+        };
         // קריאה לבוט בשמו (בלי תיוג רשמי) — נחשב פנייה, גם בלי !
         const nameCalled = /מולטי[\s-]?בוט|מולטיבוט/i.test(rawText || '');
         const mentioned = isMentioningBot(msg, botJid) || nameCalled;
         const hasImage = !!msg.message?.imageMessage;
         const hasAudio = !!(msg.message?.audioMessage || msg.message?.pttMessage);
+
+        // 🎙️ תמלול אוטומטי של הודעות קוליות (למשל קבוצת "חפ"ק המהפכה" במצב תמלול בלבד)
+        if (isGroup && !msg.key.fromMe) {
+          const gdT = gdata(remoteJid);
+          const autoTr = !!gdT.toggles.autoTranscribe;
+          const onlyTr = !!gdT.toggles.onlyTranscribe;
+          const muted = !!(gdT.botMutedUntil && Date.now() < gdT.botMutedUntil);
+          if (onlyTr) {
+            if (hasAudio && autoTr && !muted) {
+              const sender = msg.key.participant || remoteJid;
+              try {
+                await sendTyping(sock, remoteJid, 1200);
+                const buf = await downloadMediaMessage(msg, 'buffer', {});
+                if (!buf || buf.length < 500) throw new Error('audio-empty');
+                const t = await transcribeAudio(buf, 'voice.ogg');
+                const name = String(msg.pushName || gdT.names?.[sender] || '').trim();
+                await sock.sendMessage(remoteJid, { text: `🎙️ *תמלול${name ? ` — ${name}` : ''}:*\n${t}` });
+              } catch (e) {
+                console.warn('auto-transcribe fail:', (e && e.message || '').slice(0, 120));
+              }
+              return;
+            }
+            // מצב "תמלול בלבד": מתעלמים מכל הודעה שאינה קולית (למעט פקודות שליטה בסיסיות)
+            const ctrl = rawText.startsWith(prefix) &&
+              /^(כבה-בוט|כבה בוט|הדלק-בוט|הדלק בוט|השתק-בוט|השתק בוט|פתח-בוט|בוט-פתח|אוטו-תמלול|תמלול-בלבד)\b/i
+                .test(rawText.slice(prefix.length).trim());
+            if (!ctrl) return;
+          } else if (hasAudio && autoTr && !muted) {
+            const sender = msg.key.participant || remoteJid;
+            try {
+              await sendTyping(sock, remoteJid, 1200);
+              const buf = await downloadMediaMessage(msg, 'buffer', {});
+              if (!buf || buf.length < 500) throw new Error('audio-empty');
+              const t = await transcribeAudio(buf, 'voice.ogg');
+              const name = String(msg.pushName || gdT.names?.[sender] || '').trim();
+              await sock.sendMessage(remoteJid, { text: `🎙️ *תמלול${name ? ` — ${name}` : ''}:*\n${t}` });
+            } catch (e) {
+              console.warn('auto-transcribe fail:', (e && e.message || '').slice(0, 120));
+            }
+            return;
+          }
+        }
 
         // 🧠 זיכרון + ניקוד + ספאם + טריוויה + סקרים (רץ על כל הודעה בקבוצה)
         {
@@ -2155,7 +3322,8 @@ async function handleChatMessage(sock, botJid, msg) {
           addPoint(remoteJid, sender);
           // אנטי-ספאם שקט — רק מעקב, בלי להתערב בשיחה
           // (נשמר ב-msg._spam כדי שמצב "ספאם-קשוח" של מנהלים יוכל למחוק)
-          if (!msg.key.fromMe) {
+          // פקודות לא נספרות: משחקים/פקודות לגיטימיות לא יגרמו למחיקת ההודעה הבאה.
+          if (!msg.key.fromMe && rawText && !rawText.startsWith(prefix)) {
             msg._spam = spamCheck(remoteJid, sender, rawText);
           }
           // טריוויה: תשובה באות/מספר (גם בלי !)
@@ -2197,6 +3365,28 @@ async function handleChatMessage(sock, botJid, msg) {
           }
           if (isPlainNum) {
             const nNum = +tRaw;
+            // 🎬 בחירת סרטון להורדה — רק מי שביקש, רק מספר מהרשימה
+            {
+              const selKey = movieDlKey(remoteJid, sender);
+              const sel = movieDlPending.get(selKey);
+              if (sel) {
+                const mutedNow = !!(gd.botMutedUntil && Date.now() < gd.botMutedUntil);
+                if (isGroup && !isFeatureOn(gd, 'video')) {
+                  movieDlPending.delete(selKey);
+                } else if (!mutedNow) {
+                  if (Date.now() - sel.at > MOVIE_DL_TTL) {
+                    movieDlPending.delete(selKey);
+                  } else if (nNum === 0) {
+                    movieDlPending.delete(selKey);
+                    await sock.sendMessage(remoteJid, { text: '🎬 בוטל.' });
+                    return;
+                  } else if (nNum >= 1 && nNum <= sel.items.length) {
+                    await downloadMovieChoice(sock, remoteJid, sender, nNum);
+                    return;
+                  }
+                }
+              }
+            }
             const xoActive = !!gd.xo;
             const xoPlayer = xoActive && (gd.xo.p1 === sender || gd.xo.p2 === sender);
             if (xoActive && xoPlayer) {
@@ -2290,9 +3480,15 @@ async function handleChatMessage(sock, botJid, msg) {
         {
           const modSender = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
           const gdMod = gdata(remoteJid);
+          // 🛡️ לעולם לא מפעילים מודרציה על הודעות של הבוט עצמו — גם אם הן מגיעות
+          // ממכשיר אחר שלו (fromMe=false) או ממספר/מכשיר מחובר אחר.
+          const fromBot = msg.key.fromMe || botSentIds.has(msg.key.id) || isBotAccount(modSender);
+          const hasSticker = !!msg.message?.stickerMessage;
           const needMod = gdMod.toggles.antilink || gdMod.toggles.anticurse ||
-            gdMod.toggles.antispam || gdMod.toggles.aiguard || (gdMod.muted || []).length > 0;
-          if (needMod && (rawText || hasImage) && !msg.key.fromMe) {
+            gdMod.toggles.antispam || gdMod.toggles.aiguard || gdMod.toggles.antiSticker ||
+            (gdMod.muted || []).length > 0;
+          // מודרציה היא כלי קבוצתי בלבד — לא נוגעים בהודעות פרטיות.
+          if (isGroup && needMod && (rawText || hasImage || hasSticker) && !fromBot) {
             // מושתק — מחיקה שקטה של כל הודעה
             if (isMuted(gdMod, modSender)) {
               await deleteMsg(sock, remoteJid, msg);
@@ -2302,20 +3498,32 @@ async function handleChatMessage(sock, botJid, msg) {
             if (!isCmd) {
               let senderIsAdmin = false;
               try {
-                if (gdMod.toggles.antilink || gdMod.toggles.anticurse || gdMod.toggles.antispam || gdMod.toggles.aiguard) {
+                if (gdMod.toggles.antilink || gdMod.toggles.anticurse || gdMod.toggles.antispam || gdMod.toggles.aiguard || gdMod.toggles.antiSticker) {
                   senderIsAdmin = await isSenderAdmin(sock, remoteJid, modSender);
                 }
               } catch { senderIsAdmin = false; }
               if (!senderIsAdmin) {
                 const aiOn = !!gdMod.toggles.aiguard;
-                // אישור AI לפני מחיקה (כששומר-AI פעיל; כשלא זמין — ההתנהגות הישנה)
+                // אישור AI לפני מחיקה (כששומר-AI פעיל; אם אין אישור — לא מוחקים)
                 const aiConfirm = async (stage1kind, text) => {
+                  // בלי שומר-AI — מתנהגים כמו הפילטרים המהירים הרגילים.
                   if (!aiOn) return true;
                   try {
                     const v = await aiJudgeText(text, { stage1: stage1kind, allowDomains: gdMod.linkAllow, extraWords: gdMod.curseExtra });
-                    if (!v) return true;
-                    return v.del;
-                  } catch { return true; }
+                    // 🛑 אין אישור מה-AI (לא זמין / תשובה לא תקינה) — לא מוחקים!
+                    // מחיקה רק כשהשופט אמר במפורש למחוק, וברמת ביטחון סבירה.
+                    if (!v || v.del !== true) return false;
+                    if (v.confidence != null && v.confidence < 0.5) return false;
+                    return true;
+                  } catch { return false; }
+                };
+                // 🔎 סריקה חופשית של שומר-AI: רק להודעות עם סימן ספאם/פרסום ברור.
+                // לא סורקים קללות כאן בכלל (זה תפקיד toggle "קללות"), ולא שואלים על שיחה תמימה.
+                const looksLikeSpamForAI = (text) => {
+                  const t = String(text || '');
+                  if (!t || t.length < 4) return false;
+                  // קישורים רגילים מטופלים אך ורק ע"י toggle "קישורים" (antilink).
+                  return /הצטרפ|קבוצת\s+פרסום|פרסום\s+בחינם|קישור\s+(?:בתגובה|בפרטי|לאתר)|לינק\s+(?:בתגובה|בפרטי)|לחצו\s+על|הירשמו|הכנסה\s+נוספת|עוקבים|ערוץ\s+חדש|whatsapp\.com\/channel|chat\.whatsapp\.com|wa\.me\/|t\.me\//i.test(t);
                 };
                 // ענישה אחידה לנתיבים החדשים (מחיקה + אזהרה, 3 = הרחקה)
                 const punish = async (icon, delText) => {
@@ -2323,9 +3531,8 @@ async function handleChatMessage(sock, botJid, msg) {
                   const n = addWarn(gdMod, modSender);
                   saveStore();
                   if (n >= 3) {
-                    clearWarns(gdMod, modSender);
-                    saveStore();
                     const res = await kickParticipant(sock, remoteJid, modSender);
+                    if (res.ok) { clearWarns(gdMod, modSender); saveStore(); }
                     await sock.sendMessage(remoteJid, {
                       text: res.ok
                         ? `${icon} ${delText} + @${String(modSender).split('@')[0]} הורחק לאחר 3 אזהרות. 🦵`
@@ -2339,7 +3546,12 @@ async function handleChatMessage(sock, botJid, msg) {
                     });
                   }
                 };
-                // 0) תמונות: ברקודים עם קישורים (אנטי-קישורים) + תוכן פוגעני (שומר-AI)
+                // 0) סטיקרים — הסרה + אזהרה אוטומטית (3 אזהרות = הרחקה)
+                if (gdMod.toggles.antiSticker && hasSticker) {
+                  await punish('🧷', 'סטיקר נמחק (סטיקרים אסורים בקבוצה).');
+                  return;
+                }
+                // 0.1) תמונות: ברקודים עם קישורים (אנטי-קישורים) + תוכן פוגעני (שומר-AI)
                 if (hasImage && (gdMod.toggles.antilink || aiOn)) {
                   try {
                     const imgBuf = await downloadMediaRetry(msg, 'mod');
@@ -2373,9 +3585,8 @@ async function handleChatMessage(sock, botJid, msg) {
                   const n = addWarn(gdMod, modSender);
                   saveStore();
                   if (n >= 3) {
-                    clearWarns(gdMod, modSender);
-                    saveStore();
                     const res = await kickParticipant(sock, remoteJid, modSender);
+                    if (res.ok) { clearWarns(gdMod, modSender); saveStore(); }
                     await sock.sendMessage(remoteJid, {
                       text: res.ok
                         ? `🔗 קישור נמחק + @${String(modSender).split('@')[0]} הורחק לאחר 3 אזהרות. 🦵`
@@ -2400,31 +3611,27 @@ async function handleChatMessage(sock, botJid, msg) {
                     mentions: [modSender],
                   });
                   if (n >= 3) {
-                    clearWarns(gdMod, modSender);
-                    saveStore();
                     const res = await kickParticipant(sock, remoteJid, modSender);
+                    if (res.ok) { clearWarns(gdMod, modSender); saveStore(); }
                     await sock.sendMessage(remoteJid, {
                       text: res.ok ? `🦵 הורחק לאחר 3 אזהרות שפה.` : `🦵 ההרחקה נכשלה (${res.error || 'ודא שהבוט מנהל'}).`,
                     });
                   }
                   return;
                 }
-                // 3) ספאם קשוח (נשען על אותו spamCheck שקט הקיים)
+                // 3) ספאם קשוח — מחיקה + אזהרה, ואחרי 3 אזהרות הרחקה
                 if (gdMod.toggles.antispam && (msg._spam === 'flood' || msg._spam === 'links')) {
-                  await deleteMsg(sock, remoteJid, msg);
-                  await sock.sendMessage(remoteJid, {
-                    text: `🌊 הצפה נמחקה — slow down! (@${String(modSender).split('@')[0]})`,
-                    mentions: [modSender],
-                  });
+                  await punish('🌊', msg._spam === 'links' ? 'ספאם קישורים נמחק!' : 'הצפת ספאם נמחקה!');
                   return;
                 }
-                // 4) שומר-AI: סריקה חופשית כשאין ממצא מהפילטרים המהירים
-                if (aiOn && rawText && rawText.trim().length > 1) {
+                // 4) שומר-AI: סריקה חופשית — רק ספאם/פרסום ברור, לא קללות ולא שיחה רגילה.
+                // (קללות מטופלות אך ורק אם toggle "קללות" דלוק; שיחה תמימה לעולם לא נמחקת כאן.)
+                if (aiOn && rawText && looksLikeSpamForAI(rawText)) {
                   try {
                     const v = await aiJudgeText(rawText, { stage1: null, allowDomains: gdMod.linkAllow, extraWords: gdMod.curseExtra });
-                    if (v && v.del) {
-                      const icon = v.kind === 'curse' ? '🤬' : v.kind === 'link' ? '🔗' : '🌊';
-                      await punish(icon, `הודעה בעייתית נמחקה.${v.reason ? ` (${v.reason.slice(0, 80)})` : ''}`);
+                    // ספאם בלבד + ביטחון גבוה = מחיקה. כל דבר אחר — משאירים.
+                    if (v && v.del === true && v.kind === 'spam' && (v.confidence ?? 0) >= 0.85) {
+                      await punish('🌊', `פרסום/ספאם נמחק.${v.reason ? ` (${v.reason.slice(0, 80)})` : ''}`);
                       return;
                     }
                   } catch {}
@@ -2439,13 +3646,27 @@ async function handleChatMessage(sock, botJid, msg) {
         let usedPrefix = false;
         if (text.startsWith(prefix)) {
           usedPrefix = true;
-          text = text.slice(prefix.length).trim();
+          text = text.slice(prefix.length).replace(/^[!]+/, '').trim();
           console.log(`▶️ פקודה ב-${remoteJid}: ${prefix}${text.slice(0, 40)} (fromMe=${!!msg.key.fromMe})`);
         } else if (isGroup && !mentioned && !hasImage && !isReplyToBot(msg)) {
           // חריג: הבעלים מהחשבון עצמו כותב "אמור ..." בקבוצת הניסוי — עובר גם בלי !
+          const _mvText = text.replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim();
           if (msg.key.fromMe && remoteJid === TEST_GROUP_JID && /^אמור[\s-]+/i.test(text)) {
             console.log(`📣 אמור עצמי בקבוצת הניסוי (בלי קידומת)`);
-          } else return; // לא להספים קבוצות — המשך שיחה רק בתשובה להודעת הבוט
+          } else if (config.MOVIE_GROUP && remoteJid === config.MOVIE_GROUP && !msg.key.fromMe &&
+                     _mvText.length >= 2 && !/^\d+$/.test(_mvText) &&
+                     !_mvText.startsWith('@') && !MOVIE_CHAT_NOISE.test(_mvText)) {
+            // 🎬 קבוצת "בוט הורדת סרטונים": כל הודעה חופשית = חיפוש סרטון
+            const gdMv = gdata(remoteJid);
+            const _mutedMv = !!(gdMv.botMutedUntil && Date.now() < gdMv.botMutedUntil);
+            if (!_mutedMv && isFeatureOn(gdMv, 'video')) {
+              const mvSender = msg.key.participant || remoteJid;
+              await offerMovieDownloads(sock, remoteJid, mvSender, _mvText);
+            }
+            return;
+          } else if (!parseSunoRequest(text.replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim())) {
+            return; // לא להספים קבוצות — המשך שיחה רק בתשובה להודעת הבוט
+          }
         }
         // הסר תיוג @בוט / קריאת שם מהטקסט אם יש + תווים בלתי-נראים (וואטסאפ מוסיפה סימני כיווניות)
         text = text.replace(/@\d+/g, '').replace(/מולטי[\s-]?בוט/gi, '').replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').replace(/[\u05be\u2013\u2014]/g, '-').trim();
@@ -2493,25 +3714,104 @@ async function handleChatMessage(sock, botJid, msg) {
           }
           return;
         }
-        // --- 🔒 פרטי נעול: רק הבעלים. כל השאר → קבוצה + קישור ---
+        // --- 📬 פרטי: רק בקשת סרטון. למי שאינו הבעלים — באישור הבעלים ---
         // 🛡️ קודם מתעלמים מהודעות ריקות (ריאקשן/סטיקר/מחיקה) — שלא ישלח DM סתם ככה
-        if (!isGroup && !text && !hasImage && !hasAudio) return;
+        const _hasNativePoll = !!(msg.message?.pollCreationMessage || msg.message?.pollCreationMessageV2 || msg.message?.pollCreationMessageV3);
+        if (!isGroup && !text && !hasImage && !hasAudio && !_hasNativePoll) return;
         if (!isGroup) {
           const _dmOwner = msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;
+          if (_dmOwner) ownerChatJid = remoteJid;
           if (!_dmOwner) {
+            // רק פקודה מפורשת של יצירת סרטון פותחת בקשת אישור
+            const _vp = config.VIDEO_ENABLED ? parseExplicitVideoCommand(text, usedPrefix) : null;
+            if (_vp !== null) {
+              await handleVideoApprovalRequest(sock, remoteJid, msg, _vp);
+              return;
+            }
             const _last = dmLockAt.get(remoteJid) || 0;
             if (Date.now() - _last > 5 * 60 * 1000) {
               dmLockAt.set(remoteJid, Date.now());
-              const _ch = (config.CHANNEL_URL || '').trim();
+              const _groupLink = (config.DM_GROUP_URL || '').trim() || 'https://chat.whatsapp.com/DLMwZWRGxBeLEAacGsiPl9';
               await sock.sendMessage(remoteJid, { text:
-                `📢 *הקבוצה של מולטי בוט נחסמה ע"י וואטסאפ.*\n\n` +
-                `📰 כדי להישאר מעודכנים, עקבו אחרי ערוץ העדכונים:\n${_ch}\n\n` +
-                `ברגע שתיפתח קבוצה חדשה — נודיע בערוץ ✅` });
+                `🤖 הבוט עובד רק בקבוצה.\nהצטרף/י כאן: ${_groupLink}\n\n` +
+                `🎬 רוצה ליצור סרטון? כתוב/י:\n` +
+                `${prefix}צור-סרטון <מה קורה> | <איפה> | <סגנון> | <משך>\n` +
+                `דוגמה: ${prefix}צור-סרטון בחורה נותנת סטירה לבחור | שוק מחנה יהודה | ריאליסטי | 10 שניות\n` +
+                `הבקשה תישלח לאישור, והסרטון יישלח אחרי אישור.\n` +
+                `אם בוט הסרטונים ישאל שאלה — אעביר אותה לכאן.` });
             }
             return;
           }
+          // --- 🎬 אישור/דחיית בקשת סרטון (בעלים) ---
+          {
+            const am = text.match(/^(אשר-סרטון|אשר|approve|אישור)\s*[:\-]?\s*(.*)$/is);
+            const rm = text.match(/^(דחה-סרטון|דחה|reject|דחייה|בטל-סרטון)\s*[:\-]?\s*(.*)$/is);
+            if ((am || rm) && videoApprovalsHavePending()) {
+              const arg = (am ? am[2] : rm[2]) || '';
+              await handleVideoApprovalDecision(sock, remoteJid, !!am, arg);
+              return;
+            }
+          }
+          // --- 📊 סקר בעלים מהפרטי → שידור לכל הקבוצות, תוצאות בעוד 24 שעות ---
+          const _pollOwner = msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;
+          if (_pollOwner) {
+            const nat = msg.message?.pollCreationMessage || msg.message?.pollCreationMessageV2 || msg.message?.pollCreationMessageV3;
+            if (nat && nat.name && Array.isArray(nat.options)) {
+              const q = String(nat.name).trim();
+              const opts = nat.options.map((o) => String(o?.optionName || '').trim()).filter(Boolean).slice(0, 6);
+              if (q && opts.length >= 2) {
+                console.log(`📊 owner poll (native) → broadcast: ${q.slice(0, 60)}`);
+                await broadcastPollToGroups(sock, remoteJid, q, opts);
+                return;
+              }
+            }
+            const pm = (text || '').match(/^(?:סקר|poll)(?=\s|:|\||$)\s*[:\-]?\s*([\s\S]*)$/i);
+            if (pm) {
+              const parts = (pm[1] || '').split('|').map((s) => s.trim()).filter(Boolean);
+              if (parts.length < 3) {
+                await sock.sendMessage(remoteJid, { text:
+                  `📊 *סקר לכל הקבוצות (בעלים)*\n` +
+                  `כתוב: ${prefix}סקר <שאלה> | <אפשרות> | <אפשרות> [...עד 6]\n` +
+                  `דוגמה: ${prefix}סקר איפה נפגשים? | פארק | קניון | ים\n\n` +
+                  `⏳ התוצאות יישלחו לכאן אוטומטית כעבור 24 שעות.` });
+                return;
+              }
+              console.log(`📊 owner poll → broadcast: ${parts[0].slice(0, 60)}`);
+              await broadcastPollToGroups(sock, remoteJid, parts[0], parts.slice(1, 7));
+              return;
+            }
+            // --- 🎬 בקשת יצירת סרטון מהבעלים (פרטי) ---
+            if (config.VIDEO_ENABLED) {
+              const _vprompt = parseVideoGenRequest(text);
+              if (_vprompt !== null) {
+                console.log(`🎬 owner video → relay: ${_vprompt.slice(0, 60)}`);
+                await handleVideoGenRequest(sock, remoteJid, msg, _vprompt);
+                return;
+              }
+            }
+          }
         }
         if (!text && !hasImage) return;
+
+        // --- 🎵 יצירת שיר/מנגינה עם Suno — שפה חופשית, בלי פקודה ---
+        {
+          const sunoReq = parseSunoRequest(text);
+          if (sunoReq) {
+            // הגב (Reply) להודעה עם מילים? משתמשים בהן אם לא צורפו מילים לבקשה
+            const qLyrics = String(quotedText || '').trim();
+            if (!sunoReq.lyrics && !sunoReq.prompt && qLyrics.length >= 10 &&
+                !/^(?:🎵|🎼|🔊|🤖|😢|🔑|💳|✨|🎧)/.test(qLyrics) &&
+                !/על מה השיר|איזו מנגינה|יוצר לך שיר/.test(qLyrics)) {
+              sunoReq.lyrics = qLyrics.slice(0, 4000);
+            }
+            if (isGroup && !msg.key.fromMe && !isFeatureOn(gdata(remoteJid), 'song')) {
+              await sock.sendMessage(remoteJid, { text: `🔇 הפיצ׳ר ${featLabel('song')} כבוי בקבוצה זו.` });
+              return;
+            }
+            await handleSunoCreation(sock, remoteJid, msg, sunoReq);
+            return;
+          }
+        }
 
         const lower = text.toLowerCase();
 
@@ -2522,7 +3822,7 @@ async function handleChatMessage(sock, botJid, msg) {
           activeJob.waitingHuman = false;
           try { clearTimeout(instinctQTimer); instinctQTimer = null; } catch {}
           try {
-            await sock.sendMessage(instinctSendJid || config.INSTINCT_JID, { text: text.slice(0, 500) });
+            await sock.sendMessage(activeJob.sendJid || instinctSendJid || config.INSTINCT_JID, { text: text.slice(0, 500) });
             await sock.sendMessage(remoteJid, { text: `🤖 הועבר ל-Instinct, מחכה לתוצאה... ⏳` });
             console.log(`🤖 human reply relayed`);
           } catch (e) {
@@ -2553,9 +3853,24 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
+        // --- 🎨 בקשת המשך לתמונה קודמת: לא מפרשים מחדש בתור בקשה חדשה ---
+        let imgEditFollow = false;
+        {
+          const lm = lastMedia.get(remoteJid);
+          const hasExplicitEditMedia = hasImage || !!msg.message?.stickerMessage || !!quoted?.imageMessage || !!quoted?.stickerMessage;
+          const recentImg = lm?.kind === 'image' && lm.buffer && Date.now() - (lm.at || 0) < 30 * 60000;
+          const editReq = hasExplicitEditMedia
+            ? looksLikeImageEdit(text)
+            : (recentImg ? looksLikeImageFollowUp(text) : false);
+          if (editReq && !looksLikeNewImage(text)) {
+            imgEditFollow = true;
+            console.log(`🎨 בקשת עריכה לתמונה: "${text.slice(0, 60)}"`);
+          }
+        }
+
         // --- 🧠 זיהוי פקודות בשפה טבעית (לא מנהלים): "צור לי תמונה" → "תמונה ..." ---
         {
-          const norm = normalizeNaturalCommand(text);
+          const norm = imgEditFollow ? text : normalizeNaturalCommand(text);
           if (norm !== text) {
             console.log(`🧠 NL: "${text.slice(0, 40)}" → "${norm.slice(0, 40)}"`);
             text = norm;
@@ -2565,10 +3880,10 @@ async function handleChatMessage(sock, botJid, msg) {
         // --- 🧠 תשובה מאומנת קודמת (לפני AI — זול ומדויק; לא חוטף פקודות מפורשות) ---
         {
           const fw0 = (text.split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
-          if (!KNOWN_FIRST.has(fw0) && !skipAI) {
+          if (!KNOWN_FIRST.has(fw0) && !skipAI && !imgEditFollow) {
             const learned = matchLearned(text);
             if (learned) {
-              pushHistory(remoteJid, 'user', text);
+              pushHistory(remoteJid, 'user', text, msg.pushName || '');
               pushHistory(remoteJid, 'assistant', learned);
               await sock.sendMessage(remoteJid, { text: learned });
               return;
@@ -2582,7 +3897,20 @@ async function handleChatMessage(sock, botJid, msg) {
           const hasQuotedImg = !!(quoted && quoted.imageMessage);
           const asksAboutImage = /מה (יש|רואים|זה|זאת|מופיע) בתמונה|תאר(י|ו)?( לי)?( את)? ?התמונה|מה אתה רואה|איזו תמונה|what('| i)s in (the|this) (image|picture|photo)|describe (the|this) (image|picture|photo)/i.test(text);
           if (asksAboutImage && !hasImage && !hasQuotedImg && !KNOWN_FIRST.has(fw0q)) {
-            pushHistory(remoteJid, 'user', text);
+            // יש תמונה אחרונה שהבוט יצר/ערך בצ'אט? משתמשים בה במקום לבקש תמונה חדשה.
+            const lm = lastMedia.get(remoteJid);
+            if (lm?.kind === 'image' && lm.buffer && Date.now() - (lm.at || 0) < 30 * 60000) {
+              try {
+                await sendTyping(sock, remoteJid, 1200);
+                const ans = await describeImage(lm.buffer, text);
+                const reply = `👁️ ${ans}`;
+                pushHistory(remoteJid, 'user', text, msg.pushName || '');
+                pushHistory(remoteJid, 'assistant', reply);
+                await sock.sendMessage(remoteJid, { text: reply });
+                return;
+              } catch {}
+            }
+            pushHistory(remoteJid, 'user', text, msg.pushName || '');
             const reply = '📷 כדי שאראה את התמונה — שלח/י אותה עם השאלה בכיתוב, או הגב (Reply) עליה עם השאלה 🙂';
             pushHistory(remoteJid, 'assistant', reply);
             await sock.sendMessage(remoteJid, { text: reply });
@@ -2591,24 +3919,29 @@ async function handleChatMessage(sock, botJid, msg) {
         }
 
         // --- 🧠 הבנה מלאה: פקודה מפורשת → מהיר; אחרת AI עם הקשר (ניתוב או תשובה ישירה) ---
+        let aiIntent = '';
         {
           const _sndU = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
           if (!skipAI && !(await checkFreeQuota(sock, remoteJid, _sndU, msg.key.fromMe, isGroup))) return;
           const hist = [...(chatHistory.get(remoteJid) || [])].slice(-12)
-            .map((h) => `${h.role === 'user' ? (msg.pushName || 'משתמש') : 'בוט'}: ${h.content}`.slice(0, 220));
+            .map((h) => `${h.role === 'user' ? (h.sender || msg.pushName || 'משתמש') : 'בוט'}: ${h.content}`.slice(0, 220));
           if (!hist.length) {
             try {
               hist.push(...recentChat(remoteJid, 12).filter((l) => l.text).map((l) => `${l.name || ''}: ${l.text}`.slice(0, 220)));
             } catch {}
           }
-          let qtxt = '';
-          try {
-            const qm = quoted || null;
-            qtxt = (qm?.conversation || qm?.extendedTextMessage?.text || qm?.imageMessage?.caption || qm?.videoMessage?.caption || '').slice(0, 300);
-          } catch {}
-          const under = skipAI ? { type: 'cmd', text } : await aiUnderstand(text, { history: hist, sender: msg.pushName || '', quoted: qtxt });
+          const _fwU = (text.split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
+          const under = (skipAI || imgEditFollow)
+            ? { type: 'cmd', text }
+            : await aiUnderstand(text, {
+              history: hist,
+              sender: msg.pushName || '',
+              quoted: quotedText,
+              thread: KNOWN_FIRST.has(_fwU) ? '' : getThreadContext(),
+            });
+          if (under.type === 'chat') aiIntent = under.intent || '';
           if (under.type === 'answer' && under.text) {
-            pushHistory(remoteJid, 'user', text);
+            pushHistory(remoteJid, 'user', text, msg.pushName || '');
             pushHistory(remoteJid, 'assistant', under.text);
             await sock.sendMessage(remoteJid, { text: under.text });
             return;
@@ -2621,7 +3954,7 @@ async function handleChatMessage(sock, botJid, msg) {
           const fw = (text.split(/\s+/)[0] || '').toLowerCase().replace(/^[:\-]+|[:\-]+$/g, '');
           if (!META_ALWAYS.has(fw)) {
             const feat = WORD2FEAT[fw];
-            const need = feat || (KNOWN_FIRST.has(fw) ? null : 'chat');
+            const need = imgEditFollow ? 'image' : (feat || (KNOWN_FIRST.has(fw) ? null : 'chat'));
             if (need && !isFeatureOn(gdata(remoteJid), need)) {
               const ck = `feat:${remoteJid}:${need}`;
               const last = proPromoAt.get(ck) || 0;
@@ -2634,50 +3967,72 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
-        // --- 😀 תגובת אימוג'י עם AI — הבוט מחליט לבד מתי ולמה (רק קבוצות מורשות) ---
+        // --- 😀 תגובת אימוג'י לכל הודעה — מבוסס הקשר, תמיד מגיב ---
         {
           try {
             const MGMT_R = config.MGMT_GROUP || '';
-            if (isGroup && !msg.key.fromMe && !usedPrefix && !mentioned && remoteJid !== MGMT_R &&
-                isGroupAllowed(remoteJid, true) && text.length > 2 && text.length < 300 &&
-                Date.now() - (reactAt.get(remoteJid) || 0) > 150000) {
+            const isPrivate = !isGroup;
+            if (!msg.key.fromMe && remoteJid !== MGMT_R &&
+                (isPrivate || (isGroup && isGroupAllowed(remoteJid, true))) &&
+                !usedPrefix && !mentioned && text.length > 2 && text.length < 300 &&
+                Date.now() - (reactAt.get(remoteJid) || 0) > 120000) {
               const R = (a) => a[Math.floor(Math.random() * a.length)];
+              // Fallback עשיר מבוסס-מילות-מפתח — מכסה כמעט כל הקשר
               const fallbackReact = () => {
-                if (/שלום|היי|הי |בוקר טוב|ערב טוב|לילה טוב|מה נשמע|מה קורה|הייוש/i.test(text)) return R(['👋', '🙌']);
-                if (/חח|😂|🤣|מצחיק|בדיחה|צחוק|קורע/i.test(text)) return '😂';
-                if (/תודה|תודות|מעריך/i.test(text)) return R(['❤️', '🙏']);
-                if (/מזל טוב|מזלט|ברכות|בהצלחה/i.test(text)) return R(['🎉', '🥳']);
-                if (/עצוב|באסה|משתתף|ניחומים|😢|😭|כואב/i.test(text)) return R(['🫂', '❤️']);
-                if (/לילה/i.test(text)) return '🌙';
-                if (/בוקר/i.test(text)) return '🌅';
-                return R(['🔥', '❤️', '👍', '😮', '👏', '💯']);
+                const t = text.toLowerCase();
+                if (/שלום|היי|הי |בוקר טוב|ערב טוב|לילה טוב|מה נשמע|מה קורה|הייוש|wassup|hello|hi\b|hey\b/i.test(t)) return R(['👋', '🙌', '😊']);
+                if (/חח|😂|🤣|מצחיק|בדיחה|צחוק|קורע|lol|haha|😁/i.test(t)) return R(['😂', '🤣', '😆']);
+                if (/תודה|תודות|מעריך|תנקיו|thanks|thank you/i.test(t)) return R(['❤️', '🙏', '🥰']);
+                if (/מזל טוב|מזלט|ברכות|בהצלחה|יום הולדת|congratulations|congrats/i.test(t)) return R(['🎉', '🥳', '🎂', '🎊']);
+                if (/עצוב|באסה|משתתף|ניחומים|😢|😭|כואב|עזרה|חבל|חסר|לבד/i.test(t)) return R(['🫂', '❤️', '💙', '😢']);
+                if (/אהבה|אוהב|אוהבת|love|❤️|💕|💗|חמוד|יקר/i.test(t)) return R(['❤️', '🥰', '💕', '😍']);
+                if (/כועס|מעצבן|עצבים|שונא|מגעיל|😡|🤬/i.test(t)) return R(['😮', '😬', '🫠']);
+                if (/וואו|מדהים|מטורף|מדהין|אחלה|כבוד|wow|amazing|awesome|🔥/i.test(t)) return R(['🔥', '🤩', '😱', '💯']);
+                if (/שיר|מוזיקה|נגינה|music|song|🎵|🎶/i.test(t)) return R(['🎵', '🎶', '🎸']);
+                if (/אוכל|מתכון|טעים|אכלנו|pizza|food|🍕|🍔|🍜/i.test(t)) return R(['😋', '🤤', '🍕']);
+                if (/ספורט|כדורגל|כדורסל|tennis|football|soccer|⚽|🏀|🏆/i.test(t)) return R(['⚽', '🏆', '💪', '🎯']);
+                if (/שינה|עייף|לילה|ישן|ישנה|לישון|night|sleep|😴/i.test(t)) return R(['😴', '🌙', '💤']);
+                if (/בוקר|קפה|morning|☀️/i.test(t)) return R(['🌅', '☀️', '☕']);
+                if (/כסף|עסקה|מחיר|רווח|money|💰|💸|💵/i.test(t)) return R(['💰', '🤑', '💸']);
+                if (/נסיעה|טיול|חופשה|trip|travel|✈️|🏖️/i.test(t)) return R(['✈️', '🌍', '🏖️']);
+                if (/כן|בטח|נכון|ודאי|yes|sure|agree|מסכים/i.test(t)) return R(['✅', '👍', '💪']);
+                if (/לא|אסור|שגוי|no\b|nope|wrong/i.test(t)) return R(['❌', '🙅', '😅']);
+                if (/שאלה|שאל|שאלי|למה|מה|מי|איך|why|what|how|who|when/i.test(t)) return R(['🤔', '💭', '🧐']);
+                if (/תמונה|צילום|סלפי|photo|image|📸|🖼️/i.test(t)) return R(['📸', '🖼️', '🤳']);
+                if (/סרט|סרטון|video|סדרה|🎬|📺/i.test(t)) return R(['🎬', '🍿', '📺']);
+                if (/ילד|תינוק|baby|👶|🍼/i.test(t)) return R(['👶', '🥰', '💕']);
+                if (/חתול|כלב|cat|dog|🐱|🐶/i.test(t)) return R(['🐱', '🐶', '🐾']);
+                if (/גשם|קר|חם|שמש|שלג|weather|rain|snow|☁️|🌧️|❄️/i.test(t)) return R(['🌦️', '⛅', '🌡️']);
+                if (/עבודה|משרד|job|work|boss|💼|👔/i.test(t)) return R(['💼', '👔', '📊']);
+                if (/לימודים|בית ספר|אוניברסיטה|school|study|📚|✏️/i.test(t)) return R(['📚', '✏️', '🎓']);
+                if (/חופש|שישי|שבת|weekend|friday|🎊/i.test(t)) return R(['🎉', '🥂', '🙌']);
+                if (/בריאות|חולה|כאב|רופא|health|sick|💊|🏥/i.test(t)) return R(['🙏', '💊', '❤️']);
+                if (/מתנה|יום הולדת|gift|present|🎁/i.test(t)) return R(['🎁', '🎂', '🥳']);
+                if (/🔥|fire|לוהט/i.test(t)) return '🔥';
+                // ברירת מחדל כללית
+                return R(['👍', '🔥', '❤️', '😊', '💯', '👏', '🙌', '✨']);
               };
               let em = '';
               try {
-                const q = `אתה מחליט אם בוט וואטסאפ בקבוצה צריך להגיב באימוג'י (reaction) להודעה הבאה. החזר JSON בלבד, בלי הסברים: {"react":true,"emoji":"🔥"} או {"react":false,"emoji":""}. ` +
-                  `הגב true רק אם ההודעה מביעה רגש, הומור, ברכה, תודה, התלהבות, עצב או חיבה — ואימוג'י אחד בלבד שמתאים בדיוק לתוכן. ` +
-                  `הגב false על: שאלות, בקשות, פקודות, הודעות טכניות/יבשות/קצרות, קישורים בלבד, ספאם. הודעה: "${text.slice(0, 200)}"`;
+                const q = `בחר אימוג'י אחד בלבד שמגיב הכי טוב להודעה הבאה. התחשב בהקשר, ברגש ובתוכן. החזר JSON בלבד: {"emoji":"🔥"}. השתמש באימוג'ים מגוונים ומתאימים. הודעה: "${text.slice(0, 200)}"`;
                 const ans = await Promise.race([
                   chatAI(q, []).then((r) => (r && r.text) || '').catch(() => ''),
-                  new Promise((res) => setTimeout(() => res(''), 9000)),
+                  new Promise((res) => setTimeout(() => res(''), 6000)),
                 ]);
                 const m = String(ans || '').match(/\{[\s\S]*?\}/);
                 if (m) {
                   const j = JSON.parse(m[0]);
-                  if (j && j.react === true && typeof j.emoji === 'string') {
+                  if (j && typeof j.emoji === 'string') {
                     const e = j.emoji.trim();
                     if (e && !/\s/.test(e) && [...e].length <= 4) em = e;
                   }
                 }
               } catch {}
-              if (!em) {
-                // ה-AI אמר לא או נכשל — לפעמים בכל זאת מגיבים (10%) כדי להישאר חיים
-                if (Math.random() < 0.10) em = fallbackReact();
-              }
+              if (!em) em = fallbackReact();
               if (em) {
                 reactAt.set(remoteJid, Date.now());
                 sock.sendMessage(remoteJid, { react: { text: em, key: msg.key } }).catch(() => {});
-                console.log(`😀 תגובה ${em} ב-${remoteJid}`);
+                console.log(`😀 תגובה ${em} ל-${msg.key.id} ב-${remoteJid}`);
               }
             }
           } catch {}
@@ -2718,6 +4073,49 @@ async function handleChatMessage(sock, botJid, msg) {
                 await new Promise((r) => setTimeout(r, 1200));
               }
               await sock.sendMessage(remoteJid, { text: `📣 פורסם ל-*${n}/${targets.length}* קבוצות.` });
+              return;
+            }
+          }
+          // 📣 פרסומות אוטומטיות (מהפאנל) — שליחה/הפעלה/כיבוי
+          {
+            const m = text.match(/^(פרסומת|ads)\s*[:\-]?\s*([\s\S]*)$/is);
+            if (m) {
+              if (!(await mgmtOnly())) return;
+              const arg = (m[2] || '').trim().toLowerCase();
+              if (!arg) {
+                const s = adsStatus();
+                const last = s.lastPostAt ? new Date(s.lastPostAt).toLocaleString('he-IL') : 'אף פעם';
+                await sock.sendMessage(remoteJid, {
+                  text: `📣 *פרסומות אוטומטיות*\n` +
+                    `מצב: ${s.enabled ? 'פעיל ✅' : 'כבוי ⛔'}\n` +
+                    `קבוצות מסומנות: ${s.targetCount}\n` +
+                    `נשלח היום: ${s.todayCount}/${s.maxPerDay}\n` +
+                    `מרווח: ${s.intervalMinutes} דק׳ · שעות: ${s.activeHours[0]}:00-${s.activeHours[1]}:00\n` +
+                    `שליחה אחרונה: ${last}\n\n` +
+                    `• ${prefix}פרסומת שלח — שלח עכשיו\n` +
+                    `• ${prefix}פרסומת הפעל / ${prefix}פרסומת כבה\n` +
+                    `• קבוצות וקטגוריות — בפאנל הניהול`,
+                });
+                return;
+              }
+              if (/^(שלח|עכשיו|send)$/i.test(arg)) {
+                const r = await sendAdNow(sock, { force: false });
+                await sock.sendMessage(remoteJid, {
+                  text: r.ok ? `📣 נשלח ל-*${r.sent}/${r.total}* קבוצות.` : `⚠️ ${r.error}`,
+                });
+                return;
+              }
+              if (/^(הפעל|on)$/i.test(arg)) {
+                saveAdsConfig({ enabled: true });
+                await sock.sendMessage(remoteJid, { text: `📣 פרסומות אוטומטיות *הופעלו*.` });
+                return;
+              }
+              if (/^(כבה|off)$/i.test(arg)) {
+                saveAdsConfig({ enabled: false });
+                await sock.sendMessage(remoteJid, { text: `📣 פרסומות אוטומטיות *כובו*.` });
+                return;
+              }
+              await sock.sendMessage(remoteJid, { text: `📣 שימוש: ${prefix}פרסומת [שלח|הפעל|כבה]` });
               return;
             }
           }
@@ -4052,7 +5450,7 @@ async function handleChatMessage(sock, botJid, msg) {
               const cmd = (parts[0] || '').replace(/^[!\-/]/, '');
               const rest = m[3].trim().slice(parts[0].length).trim();
               const done = async (t) => { await sock.sendMessage(remoteJid, { text: t }); };
-              const tg = { 'קישורים': 'antilink', 'קללות': 'anticurse', 'ספאם-קשוח': 'antispam', 'ספאם': 'antispam', 'שומר': 'aiguard', 'שומר-ai': 'aiguard', 'ברוכים': 'welcome', 'ברוכים-הבאים': 'welcome' };
+              const tg = { 'קישורים': 'antilink', 'קללות': 'anticurse', 'ספאם-קשוח': 'antispam', 'ספאם': 'antispam', 'שומר': 'aiguard', 'שומר-ai': 'aiguard', 'ברוכים': 'welcome', 'ברוכים-הבאים': 'welcome', 'סטיקרים': 'antiSticker', 'אנטי-סטיקר': 'antiSticker' };
               if (cmd === 'הגדרות') { await done(settingsText(tjid)); return; }
               if (tg[cmd] !== undefined) {
                 if (!rest) { await done(`${tg[cmd]}: ${gd.toggles[tg[cmd]] ? 'פעיל ✅' : 'כבוי'} (${prefix}לקבוצה ... ${cmd} on/off)`); return; }
@@ -4272,13 +5670,28 @@ async function handleChatMessage(sock, botJid, msg) {
             key: { remoteJid, id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId, fromMe: false, participant: msg.message?.extendedTextMessage?.contextInfo?.participant },
             message: quoted,
           }, kind: 'sticker' } : null;
-          const em = eMedia || eMediaSt;
-          if (em && text && !/סטיקר|sticker/i.test(text) &&
-              /^(ערוך|ערכי|תערוך|תערכי|שנה|שני|תשנה|תשני|החלף|החליפי|תחליף|הוסף|הוסיפי|תוסיף|הסר|הסירי|תסיר|תקן|תקני|תתקן|הפוך|הפכי|תהפוך|עשה|עשי|תעשה|תערוך|תוסיפי|שים|תשים|תצייר|צייר)/i.test(text)) {
+          const lmImg = lastMedia.get(remoteJid);
+          const memImg = (!eMedia && !eMediaSt && lmImg?.kind === 'image' && lmImg.buffer &&
+            Date.now() - (lmImg.at || 0) < 30 * 60000)
+            ? { target: null, kind: 'image', buf: lmImg.buffer }
+            : null;
+          const em = eMedia || eMediaSt || memImg;
+          const isMemEdit = !eMedia && !eMediaSt;
+          const editReq = isMemEdit ? looksLikeImageFollowUp(text) : looksLikeImageEdit(text);
+          if (em && text && !/סטיקר|sticker/i.test(text) && !looksLikeNewImage(text) && editReq) {
+            // "תוסיף גם את" בלי תוכן — מבקשים הבהרה במקום לשלוח הוראה חסרה.
+            if (/^(?:תוסיף|הוסף|תוסיפי|הוסיפי)\s+(?:גם\s+)?(?:את|אותו|אותה|אותם|אותן)?\s*$/i.test(text)) {
+              await sock.sendMessage(remoteJid, { text: '🎨 מה להוסיף לתמונה? כתוב/י למשל: "תוסיף שמש בשמיים" או "תוסיף כיתוב".' });
+              return;
+            }
+            // אם זו בקשת המשך, מוסיפים את ההקשר של התמונה הקודמת להוראה.
+            const editInstruction = (memImg && lmImg?.q && !/אותו|אותה|אותם|אותן|התמונה/i.test(text))
+              ? `${text} (המשך לתמונה: ${lmImg.q})`
+              : text;
             await sendTyping(sock, remoteJid, 1500);
             await sock.sendMessage(remoteJid, { text: `🎨 שולח לעריכה: "${text.slice(0, 100)}"...\n⏳ מחכה לתוצאה מ-Instinct` });
             try {
-              let buf = await downloadMediaRetry(em.target, 'edit-src');
+              let buf = em.buf || await downloadMediaRetry(em.target, 'edit-src');
               // סטיקר (webp) → JPEG לשליחה
               try {
                 if (buf[0] === 0x52 && buf[1] === 0x49) {
@@ -4286,7 +5699,7 @@ async function handleChatMessage(sock, botJid, msg) {
                   buf = await sharp(buf).jpeg({ quality: 88 }).toBuffer();
                 }
               } catch {}
-              const out = await requestInstinct(sock, text.slice(0, 500), remoteJid, buf);
+              const out = await requestInstinct(sock, editInstruction.slice(0, 500), remoteJid, buf);
               if (out && out.length > 5000) {
                 if (em.kind === 'sticker') {
                   const sticker = await toStickerBuffer(out).catch(() => null);
@@ -4302,6 +5715,7 @@ async function handleChatMessage(sock, botJid, msg) {
                     imgBuf = await sharp(out).jpeg({ quality: 88 }).toBuffer();
                   }
                 } catch {}
+                lastMedia.set(remoteJid, { kind: 'image', q: editInstruction.slice(0, 200), at: Date.now(), buffer: imgBuf });
                 await sock.sendMessage(remoteJid, { image: imgBuf, caption: `🎨 עריכה: "${text.slice(0, 150)}"` });
               } else {
                 throw new Error('EDIT_EMPTY');
@@ -4331,7 +5745,7 @@ async function handleChatMessage(sock, botJid, msg) {
               const buf = await downloadMediaRetry(qImg, 'vision');
               const ans = await describeImage(buf, text);
               const history = chatHistory.get(remoteJid) || [];
-              pushHistory(remoteJid, 'user', `[תמונה] ${text}`);
+              pushHistory(remoteJid, 'user', `[תמונה] ${text}`, msg.pushName || '');
               pushHistory(remoteJid, 'assistant', ans);
               await sock.sendMessage(remoteJid, { text: `👁️ ${ans}` });
             } catch (e) {
@@ -4399,7 +5813,7 @@ async function handleChatMessage(sock, botJid, msg) {
                 } catch {}
                 const _doneCap = [`😍🔥 קבל/י!`, `✨🎉 תתחדש/י!`, `🤩💥 יצא אש!`];
                 await sock.sendMessage(remoteJid, { image: imgBuf, caption: `🎨 "${prompt.slice(0, 200)}"\n${_doneCap[Math.floor(Math.random() * _doneCap.length)]}` });
-                lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now() });
+                lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now(), buffer: imgBuf });
                 try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: prompt.slice(0, 300), buffer: imgBuf, ext: 'jpg', source: 'whatsapp' }); } catch {}
                 return;
               }
@@ -4415,7 +5829,7 @@ async function handleChatMessage(sock, botJid, msg) {
               }
               caption += `\n${['😍🔥 קבל/י!', '✨🎉 תתחדש/י!', '🤩💥 יצא אש!'][Math.floor(Math.random() * 3)]}\n\nלא אהבת? נסה להוסיף פרטים (צבע, רקע, סגנון) ושלח שוב.`;
               await sock.sendMessage(remoteJid, { image: buffer, caption });
-              lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now() });
+              lastMedia.set(remoteJid, { kind: 'image', q: prompt.slice(0, 200), at: Date.now(), buffer });
               try { const g = await import('./gallery-log.js'); g.logCreationWithFile({ type: 'image', prompt: prompt.slice(0, 300), buffer, ext: 'jpg', source: 'whatsapp' }); } catch {}
             } catch (e) {
               console.error('image fail:', e);
@@ -4596,6 +6010,16 @@ async function handleChatMessage(sock, botJid, msg) {
         }
 
         // --- 🎬 יצירת סרטון AI — מבוטלת (הוסרה לבקשת הבעלים) ---
+
+        // --- 🎬 סרט / הורד-וידאו: 5 אפשרויות ובחירה → הורדת הנבחר בלבד ---
+        {
+          const m = text.match(/^(סרט|הורד-סרטון|הורד-וידאו|הורד וידאו|הורד סרטון|download-video)(?=\s|:|$)\s*[:\-]?\s*(.+)?$/is);
+          if (m) {
+            const sender = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
+            await offerMovieDownloads(sock, remoteJid, sender, (m[2] || '').trim());
+            return;
+          }
+        }
 
         // --- וידאו ---
         {
@@ -4791,6 +6215,109 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
+        // --- 💼 עבודות (JobMaster + Job Scouter) ---
+        {
+          const m = text.match(/^(עבודות|עבודה|jobs)(?=\s|:|$)\s*[:\-]?\s*([\s\S]*)$/i);
+          if (m) {
+            const sub = (m[2] || '').trim();
+            const sender = msg.key.participant || (msg.key.fromMe ? 'me' : remoteJid);
+            let isAdmin = !!msg.key.fromMe || resolveOwnPhone(sender) === OWNER_DIGITS;
+            if (!isAdmin) {
+              try { isAdmin = await isSenderAdmin(sock, remoteJid, sender); } catch {}
+            }
+            const store = loadJobsStore();
+            const keyFromQuoted = () => {
+              const km = String(quotedText || '').match(/\b(jm|js):(\d+)\b/i);
+              return km ? `${km[1].toLowerCase()}:${km[2]}` : '';
+            };
+            const normKeyArg = (raw) => {
+              const s0 = String(raw || '').trim().replace(/[`#]/g, '');
+              const km = s0.match(/\b(jm|js):(\d+)\b/i);
+              if (km) return `${km[1].toLowerCase()}:${km[2]}`;
+              if (/^\d+$/.test(s0)) return `jm:${s0}`;
+              return '';
+            };
+
+            if (/^(עזרה|help|\?)$/i.test(sub)) {
+              await sock.sendMessage(remoteJid, { text:
+                `💼 *עבודות — איך משתמשים?*\n\n` +
+                `• ${prefix}עבודות — משרות מכל הסוגים והגילאים\n` +
+                `• ${prefix}עבודה נוער / סטודנטים / פנסיונרים / ללא ניסיון / מהבית\n` +
+                `• ${prefix}עבודה <מילה> — חיפוש חופשי (בנייה, מכירות, מחסן...)\n` +
+                `• ${prefix}עבודה נתפס <מזהה> — סימון משרה כנתפסה (מנהלים)\n` +
+                `• ${prefix}עבודה פתוח <מזהה> — החזרה לזמין (מנהלים)\n` +
+                `• ${prefix}עבודות אוטומטי on/off — בדיקת משרות חדשות כל ${config.JOBS_CHECK_MINUTES} דקות (מנהלים)\n` +
+                `• ${prefix}עבודות סטטוס — מצב המערכת\n\n` +
+                `_המשרות נאספות מ-JobMaster ומ-Job Scouter. סטטוס "פעיל" הוא לפי בדיקת האתר — לא מול המעסיק._` });
+              return;
+            }
+
+            if (/^(סטטוס|status|מצב)$/i.test(sub)) {
+              const posted = Object.keys(store.posted || {}).length;
+              const taken = Object.values(store.status || {}).filter((x) => x === 'taken').length;
+              await sock.sendMessage(remoteJid, { text:
+                `💼 *סטטוס עבודות*\n` +
+                `🔔 פרסום אוטומטי: ${store.auto === false ? 'כבוי' : 'פעיל'}${config.JOBS_AUTO ? '' : ' (כבוי ב-.env)'}\n` +
+                `⏱️ בדיקת משרות חדשות: כל ${config.JOBS_CHECK_MINUTES} דקות (${String(config.JOBS_ACTIVE_HOURS[0]).padStart(2,'0')}:00-${String(config.JOBS_ACTIVE_HOURS[1]).padStart(2,'0')}:00)\n` +
+                `🏷️ קבוצת עבודות: ${config.JOBS_GROUP || 'לא הוגדרה'}\n` +
+                `📌 משרות שפורסמו: ${posted} · נתפסו: ${taken}` });
+              return;
+            }
+
+            const am = sub.match(/^(אוטומטי|auto)\s+(on|off|הפעל|כבה|true|false)$/i);
+            if (am) {
+              if (!isAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ רק מנהלים.' }); return; }
+              const on = /^(on|הפעל|true)$/i.test(am[2]);
+              setJobsAuto(on);
+              await sock.sendMessage(remoteJid, { text: `🔔 פרסום עבודות אוטומטי ${on ? 'הופעל' : 'כובה'}.` });
+              return;
+            }
+
+            const st = sub.match(/^(נתפס|נתפסה|תפוס|פתוח|פתוחה|זמין|taken|open)(?:\s+([\s\S]+))?$/i);
+            if (st) {
+              if (!isAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ רק מנהלים יכולים לעדכן סטטוס.' }); return; }
+              const rawKey = (st[2] || '').trim() || keyFromQuoted();
+              const key = normKeyArg(rawKey);
+              if (!key) {
+                await sock.sendMessage(remoteJid, { text: '⚠️ כתוב/י מזהה משרה (למשל jm:9826462) או הגב/י להודעת המשרה.' });
+                return;
+              }
+              const taken = /^(נתפס|נתפסה|תפוס|taken)$/i.test(st[1]);
+              setJobStatus(key, taken ? 'taken' : 'open');
+              await sock.sendMessage(remoteJid, { text: taken ? `🔴 סומן כנתפס: \`${key}\`` : `🟢 סומן כפתוח: \`${key}\`` });
+              return;
+            }
+
+            let q = sub.replace(/^(חיפוש|חפש|תמצא|תביא)\s+/i, '').trim().replace(/\?+$/, '').trim();
+            if (/^(נוער|נער|teen)$/i.test(q)) q = 'עבודה לנוער';
+            else if (/^(סטודנט|סטודנטים|student)$/i.test(q)) q = 'עבודה לסטודנטים';
+            else if (/^(פנסיונר|פנסיונרים|גיל הזהב|50\+|מבוגר|מבוגרים)$/i.test(q)) q = 'פנסיונרים';
+            else if (/^(ללא ניסיון|בלי ניסיון|no experience)$/i.test(q)) q = 'עבודה ללא ניסיון';
+            else if (/^(מהבית|עבודה מהבית|remote)$/i.test(q)) q = 'עבודה מהבית';
+            else if (/^(חלקית|חלקי|part time)$/i.test(q)) q = 'משרה חלקית';
+
+            await sendTyping(sock, remoteJid, 1200);
+            await sock.sendMessage(remoteJid, { text: `💼 מחפש/ת משרות${q ? ` עבור "${q}"` : ' מכל הסוגים והגילאים'}... ⏳` });
+            try {
+              const jobs = await getJobs({ query: q, limit: 5, includeSeen: !!q });
+              if (!jobs.length) {
+                await sock.sendMessage(remoteJid, { text: `💼 לא מצאתי משרות${q ? ` עבור "${q}"` : ''} כרגע. נסה/י מילה אחרת או ${prefix}עבודות.` });
+                return;
+              }
+              const chunks = formatJobsDigest(jobs, q ? `עבודות — ${q}` : 'עבודות חדשות');
+              for (const chunk of chunks) {
+                await sock.sendMessage(remoteJid, { text: chunk });
+                await new Promise((r) => setTimeout(r, 800));
+              }
+              recordPosted(jobs);
+            } catch (e) {
+              console.error('jobs fail:', (e && e.message || '').slice(0, 150));
+              await sock.sendMessage(remoteJid, { text: '😢 שליפת המשרות נכשלה כרגע. נסה/י שוב בעוד דקה.' });
+            }
+            return;
+          }
+        }
+
         // --- זמני שבת וחג (לא לחטוף את שבת-מוד) ---
         {
           const m = text.match(/^(שבת|כניסת-שבת|זמני-שבת)(?!-מוד|-אוטומטי)\s*[:\-]?\s*(.+)?$/is);
@@ -4884,6 +6411,12 @@ async function handleChatMessage(sock, botJid, msg) {
             const mentioned = (ctx.mentionedJid || []).filter((j) => j && j !== botJid);
             const qPart = ctx.participant || null;
             let target = mentioned[0] || null;
+            // תמיכה במספר טלפון גלוי: "!פרופיל 050-1234567" / "@0555655217"
+            if (!target && m[2]) {
+              const numRaw = (String(m[2]).match(/(?:\+?972|0)[\d\s\-()]{8,}/) || [])[0] || '';
+              const ph = normPhone(numRaw);
+              if (ph) target = `${ph}@s.whatsapp.net`;
+            }
             if (!target && qPart && !msg.key.fromMe) target = qPart; // תשובה להודעה של מישהו
             if (!target && !isGroup) target = remoteJid; // בפרטי: הצד השני
             if (!target) {
@@ -4989,7 +6522,7 @@ async function handleChatMessage(sock, botJid, msg) {
               'בחר': `🎯 *בחירה רנדומלית — איך משתמשים?*\nכתוב: ${prefix}בחר ואפשרויות מופרדות ב-| או פסיק או שורה חדשה\nדוגמה: ${prefix}בחר פיצה | סושי | המבורגר`,
               'הגרלה': `🎯 *הגרלה — איך משתמשים?*\nכתוב: ${prefix}הגרלה ואפשרויות מופרדות ב-| או פסיק\nדוגמה: ${prefix}הגרלה דני, יוסי, נועה`,
               'עד': `⏳ *ספירה לאחור — איך משתמשים?*\nכתוב: ${prefix}עד <תאריך>\nדוגמה: ${prefix}עד 25.12.2026`,
-              'תזכורת': `⏰ *תזכורת — איך משתמשים? (נשמר גם אחרי הפעלה מחדש)*\n• ${prefix}תזכורת 30 להוציא עוף — בעוד X דקות\n• ${prefix}תזכורת 18:30 להתקשר — היום/מחר בשעה\n• ${prefix}תזכורת 25.12 08:00 מסיבה — בתאריך ושעה\n• ${prefix}תזכורת יומית 08:00 ויטמינים — כל יום!\n• ${prefix}תזכורות — רשימה | ${prefix}מחק-תזכורת 1 — מחיקה`,
+              'תזכורת': `⏰ *תזכורת — איך משתמשים? (נשמר גם אחרי הפעלה מחדש)*\n• ${prefix}תזכורת 30 להוציא עוף — בעוד X דקות\n• ${prefix}תזכורת 18:30 להתקשר — היום/מחר בשעה\n• ${prefix}תזכורת 8 בבוקר לקום לתפילה — שעה במילים\n• ${prefix}תזכורת מחר בבוקר לקום — מחר בבוקר\n• ${prefix}תזכורת 25.12 08:00 מסיבה — בתאריך ושעה\n• ${prefix}תזכורת כל יום 08:00 ויטמינים — כל יום\n• ${prefix}תזכורת כל שעה לשתות מים — כל שעה\n• ${prefix}תזכורות — רשימה | ${prefix}מחק-תזכורת 1 — מחיקה`,
               'שעה': `🕐 *שעה בעולם — איך משתמשים?*\nכתוב: ${prefix}שעה <עיר>\nדוגמה: ${prefix}שעה לונדון`,
               'סיסמה': `🔑 *יצירת סיסמה — איך משתמשים?*\nכתוב: ${prefix}סיסמה [אורך]\nדוגמה: ${prefix}סיסמה 16`,
               'מספר': `🔢 *מספר רנדומלי — איך משתמשים?*\nכתוב: ${prefix}מספר [מינימום מקסימום]\nדוגמה: ${prefix}מספר 1 50`,
@@ -5029,54 +6562,42 @@ async function handleChatMessage(sock, botJid, msg) {
                   await sock.sendMessage(remoteJid, { text: countdown(arg) });
                   break;
                 case 'תזכורת': {
-                  // סדר: "יומית HH:MM" → תאריך מלא → "HH:MM" → דקות (נשמר — שורד הפעלה מחדש!)
-                  const daily = arg.match(/^יומית\s+(\d{1,2}):(\d{2})\s+([\s\S]+)/);
-                  if (daily) {
-                    const hh = String(Math.min(Math.max(+daily[1], 0), 23)).padStart(2, '0');
-                    const mm = String(Math.min(Math.max(+daily[2], 0), 59)).padStart(2, '0');
-                    const rtext = daily[3].trim().slice(0, 200);
-                    if (!rtext) throw new Error('EMPTY');
-                    addReminder(remoteJid, { text: rtext, daily: `${hh}:${mm}`, by: msg.key.participant || 'me' });
-                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת יומית נקבעה ל-${hh}:${mm}:\n"${rtext.slice(0, 150)}"` });
+                  const parsed = parseReminderInput(arg);
+                  if (!parsed) throw new Error('EMPTY');
+                  if (parsed.needsTime) {
+                    await sock.sendMessage(remoteJid, { text:
+                      `⏰ מתי? כתוב למשל:\n` +
+                      `• ${prefix}תזכורת כל יום 08:00 להתפלל\n` +
+                      `• ${prefix}תזכורת מחר בבוקר לקום לתפילה\n` +
+                      `• ${prefix}תזכורת 30 דקות להוציא עוף` });
                     break;
                   }
-                  const dtm = arg.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\s+(?:(\d{1,2}):(\d{2})\s+)?([\s\S]+)/);
-                  if (dtm) {
-                    let y = dtm[3] ? (dtm[3].length === 2 ? '20' + dtm[3] : dtm[3]) : String(new Date().getFullYear());
-                    const hh = dtm[4] || '09', mm = dtm[5] || '00';
-                    const at = new Date(+y, +dtm[2] - 1, +dtm[1], +hh, +mm).getTime();
-                    const rtext = (dtm[6] || '').trim().slice(0, 200);
-                    if (!rtext || isNaN(at) || at <= Date.now()) throw new Error('EMPTY');
-                    addReminder(remoteJid, { text: rtext, at, by: msg.key.participant || 'me' });
-                    const d = new Date(at);
-                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת נקבעה ל-${d.getDate()}.${d.getMonth() + 1} ${hh}:${mm}:\n"${rtext.slice(0, 150)}"` });
+                  if (parsed.past) {
+                    await sock.sendMessage(remoteJid, { text: `⏰ הזמן של "${parsed.text.slice(0, 120)}" כבר עבר. קבע/י תזכורת לעתיד.` });
                     break;
                   }
-                  const tm = arg.match(/^(\d{1,2}):(\d{2})\s+([\s\S]+)/);
-                  if (tm) {
-                    const now = new Date();
-                    let at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), +tm[1], +tm[2]).getTime();
-                    if (at <= Date.now()) at += 86400000; // עבר להיום — קובעים למחר
-                    const rtext = tm[3].trim().slice(0, 200);
-                    if (!rtext) throw new Error('EMPTY');
-                    addReminder(remoteJid, { text: rtext, at, by: msg.key.participant || 'me' });
-                    const d = new Date(at);
-                    const when = d.getDate() === now.getDate() ? 'היום' : 'מחר';
-                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת נקבעה ל${when} ${tm[1]}:${tm[2]}:\n"${rtext.slice(0, 150)}"` });
+                  if (parsed.everyHour) {
+                    addReminder(remoteJid, { text: parsed.text, everyHour: true, by: msg.key.participant || 'me' });
+                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת *כל שעה* נקבעה:\n"${parsed.text.slice(0, 150)}"` });
                     break;
                   }
-                  const rm = arg.match(/^(\d+)\s*(דקות|דקה|דק׳|דק|שעות|שעה|ש׳)?\s+([\s\S]+)/);
-                  if (!rm) throw new Error('EMPTY');
-                  let mins = parseInt(rm[1]);
-                  if (/שע/.test(rm[2] || '')) mins *= 60;
-                  if (mins < 1 || mins > 43200) {
-                    await sock.sendMessage(remoteJid, { text: '⏰ זמן חוקי: 1-43200 דקות (30 יום).' });
+                  if (parsed.daily) {
+                    addReminder(remoteJid, { text: parsed.text, daily: parsed.daily, by: msg.key.participant || 'me' });
+                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת יומית נקבעה ל-${parsed.daily}:\n"${parsed.text.slice(0, 150)}"` });
                     break;
                   }
-                  const rtext = rm[3].trim().slice(0, 200);
-                  addReminder(remoteJid, { text: rtext, at: Date.now() + mins * 60000, by: msg.key.participant || 'me' });
-                  await sock.sendMessage(remoteJid, { text: `⏰ תזכורת נקבעה לעוד ${mins} דקות:\n"${rtext.slice(0, 150)}"` });
-                  break;
+                  if (parsed.at) {
+                    addReminder(remoteJid, { text: parsed.text, at: parsed.at, by: msg.key.participant || 'me' });
+                    const d = new Date(parsed.at);
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    const when = parsed.durationMin
+                      ? `לעוד ${parsed.durationMin} דקות`
+                      : `${d.getDate()}.${d.getMonth() + 1} בשעה ${hh}:${mm}`;
+                    await sock.sendMessage(remoteJid, { text: `⏰ תזכורת נקבעה ${when}:\n"${parsed.text.slice(0, 150)}"` });
+                    break;
+                  }
+                  throw new Error('EMPTY');
                 }
               }
             } catch (e) {
@@ -5395,7 +6916,7 @@ async function handleChatMessage(sock, botJid, msg) {
             const word = pickScrambleWord();
             gd.scramble = { word, started: Date.now(), until: Date.now() + 5 * 60000, attempts: 0 };
             saveStore();
-            await sock.sendMessage(remoteJid, { text: `🧩 *מילים-מעורבבות!*\n\n➡️ \`${scrambleWord(word)}\`\n\nמה המילה? רשמו את התשובה *בלי !* — מי שמгад ראשון/ה מקבל/ת *3 נקודות*!\n⏰ הסבב נסגר בעוד 5 דקות.\n(סבב חדש: ${prefix}מילים-מעורבבות)` });
+            await sock.sendMessage(remoteJid, { text: `🧩 *מילים-מעורבבות!*\n\n➡️ \`${scrambleWord(word)}\`\n\nמה המילה? רשמו את התשובה *בלי !* — מי שמגלה ראשון/ה מקבל/ת *3 נקודות*!\n⏰ הסבב נסגר בעוד 5 דקות.\n(סבב חדש: ${prefix}מילים-מעורבבות)` });
             return;
           }
         }
@@ -5405,7 +6926,14 @@ async function handleChatMessage(sock, botJid, msg) {
           const m = text.match(/^(אמת-או-חובה|אמת או חובה|truth)(?=\s|:|-|$)\s*[:\-]?\s*(.*)$/is);
           if (m) {
             const arg = (m[2] || '').trim();
-            const r = pickTruthOrDare(arg);
+            // בחירה מפורשת רק כשכתבו בדיוק "אמת" או "חובה".
+            // אחרת — לסירוגין, כדי שלא ייצא שוב ושוב רק "אמת".
+            const explicit = /^אמת$/i.test(arg) ? 'אמת' : /^חובה$/i.test(arg) ? 'חובה' : '';
+            const gd = gdata(remoteJid);
+            const want = explicit || (gd.lastTruthDare === 'truth' ? 'חובה' : 'אמת');
+            const r = pickTruthOrDare(want);
+            gd.lastTruthDare = r.kind;
+            saveStore();
             const label = r.kind === 'truth' ? '🫢 *אמת*' : '😈 *חובה*';
             await sock.sendMessage(remoteJid, { text: `${label}\n\n${r.text}\n\n_(מי שמסרב/ת — כותב/ת "וויתרתי" 😄)_` });
             return;
@@ -5793,9 +7321,12 @@ async function handleChatMessage(sock, botJid, msg) {
 
         // --- טוגלים ---
         {
-          const m = text.match(/^(אוטו-סטיקר|אוטו-תרגם)\s*[:\-]?\s*(on|off|הפעל|כבה)?$/i);
+          const m = text.match(/^(אוטו-סטיקר|אוטו-תרגם|אוטו-תמלול|תמלול-בלבד)\s*[:\-]?\s*(on|off|הפעל|כבה)?$/i);
           if (m) {
-            const key = m[1] === 'אוטו-סטיקר' ? 'autoSticker' : 'autoTranslate';
+            const key = m[1] === 'אוטו-סטיקר' ? 'autoSticker'
+              : m[1] === 'אוטו-תמלול' ? 'autoTranscribe'
+              : m[1] === 'תמלול-בלבד' ? 'onlyTranscribe'
+              : 'autoTranslate';
             const gd = gdata(remoteJid);
             const arg = (m[2] || '').trim();
             if (!arg) {
@@ -5991,24 +7522,15 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
-// הודעת איסור הורדות (שירים/סרטונים מבוטלים — זכויות יוצרים)
+// הודעת הכוונה להורדות — פקודה כללית "הורד" לא מספיקה
 const DOWNLOAD_DISABLED =
-  `⛔ *הורדת שירים וסרטונים מבוטלת*\n` +
-  `הורדת קבצי אודיו/וידאו מיוטיוב אסורה (זכויות יוצרים ותנאי השימוש של יוטיוב).\n\n` +
-  `✅ במקום זה אפשר:\n` +
-  `• ${config.BOT_PREFIX}שיר <שם> — קישור חוקי לצפייה\n` +
-  `• ${config.BOT_PREFIX}וידאו <נושא> — קישורים חוקיים`;
+  `ℹ️ *להורדה — השתמש/י בפקודה מדויקת:*\n` +
+  `• ${config.BOT_PREFIX}סרט <שם> — 5 אפשרויות ובחירה, ואז הורדת הנבחר בלבד\n` +
+  `• ${config.BOT_PREFIX}שיר <שם> — קישור חוקי להשמעה`;
 
-        // --- הורדות מבוטלות (אודיו/וידאו — lookahead כדי לא לחטוף "הורד-ניהול") ---
+        // --- הורדה כללית (lookahead כדי לא לחטוף "הורד-ניהול") ---
         {
           const m = text.match(/^(הורד)(?=\s|:|$)\s*[:\-]?\s*(.+)?$/is);
-          if (m) {
-            await sock.sendMessage(remoteJid, { text: DOWNLOAD_DISABLED });
-            return;
-          }
-        }
-        {
-          const m = text.match(/^(הורד-וידאו|הורד וידאו|הורד סרטון|download-video)(?=\s|:|$)\s*[:\-]?\s*(.+)?$/is);
           if (m) {
             await sock.sendMessage(remoteJid, { text: DOWNLOAD_DISABLED });
             return;
@@ -6196,6 +7718,7 @@ const DOWNLOAD_DISABLED =
                 `🤬 סינון קללות: *${on(gd.toggles.anticurse)}*\n` +
                 `🤖 שומר-AI: *${on(gd.toggles.aiguard)}*\n` +
                 `🌊 ספאם-קשוח: *${on(gd.toggles.antispam)}*\n` +
+                `🧷 הסרת סטיקרים: *${on(gd.toggles.antiSticker)}*\n` +
                 `👋 ברוכים: *${on(gd.toggles.welcome)}*\n` +
                 `📜 חוקים: ${gd.rules ? 'מוגדר ✅' : 'לא מוגדר'}\n` +
                 `🔇 מושתקים: ${gd.muted.length}\n` +
@@ -6224,6 +7747,32 @@ const DOWNLOAD_DISABLED =
               gd.toggles.antilink = v;
               saveStore();
               await sock.sendMessage(remoteJid, { text: `🔗 הסרת קישורים ${v ? 'הופעלה ✅ (כולל ברקודים! קישור = מחיקה + אזהרה)' : 'כובה'}` });
+              return;
+            }
+          }
+
+          // 🧷 סטיקרים on/off — הסרה + אזהרה אוטומטית
+          {
+            const m = text.match(/^(סטיקרים|אנטי-סטיקר|antisticker)\s*[:\-]?\s*(.*)$/is);
+            if (m) {
+              const arg = (m[2] || '').trim();
+              const gd = gdata(remoteJid);
+              if (!arg) {
+                await sock.sendMessage(remoteJid, { text:
+                  `🧷 הסרת סטיקרים: *${gd.toggles.antiSticker ? 'פעילה ✅' : 'כבויה'}*\n` +
+                  `כשפעיל: כל סטיקר של חבר שאינו מנהל נמחק + אזהרה. 3 אזהרות = הרחקה.\n` +
+                  `${prefix}סטיקרים on / off\n(מנהלים בלבד לשינוי)` });
+                return;
+              }
+              if (!(await needAdmin())) return;
+              const v = parseOnOff(arg);
+              if (v === null) {
+                await sock.sendMessage(remoteJid, { text: `😢 כתוב: ${prefix}סטיקרים on / off` });
+                return;
+              }
+              gd.toggles.antiSticker = v;
+              saveStore();
+              await sock.sendMessage(remoteJid, { text: `🧷 הסרת סטיקרים ${v ? 'הופעלה ✅ (מחיקה + אזהרה, 3 = הרחקה)' : 'כבויה'}` });
               return;
             }
           }
@@ -6347,7 +7896,7 @@ const DOWNLOAD_DISABLED =
               const arg = (m[2] || '').trim();
               const gd = gdata(remoteJid);
               if (!arg) {
-                await sock.sendMessage(remoteJid, { text: `🌊 ספאם-קשוח: *${gd.toggles.antispam ? 'פעיל ✅ (הצפות נמחקות)' : 'כבוי'}*\n${prefix}ספאם-קשוח on / off` });
+                await sock.sendMessage(remoteJid, { text: `🌊 ספאם-קשוח: *${gd.toggles.antispam ? 'פעיל ✅ (הצפות נמחקות, 3 אזהרות = הרחקה)' : 'כבוי'}*\n${prefix}ספאם-קשוח on / off` });
                 return;
               }
               if (!(await needAdmin())) return;
@@ -6768,8 +8317,14 @@ const DOWNLOAD_DISABLED =
             }
             await sendTyping(sock, remoteJid, 1200);
             const history = chatHistory.get(remoteJid) || [];
-            const { text: ans } = await chatAI(styledPrompt(remoteJid, await enrichWithSearch(q)), history);
-            pushHistory(remoteJid, 'user', q);
+            const ans = (await aiChat(q, {
+              history,
+              sender: msg.pushName || '',
+              quoted: quotedText,
+              thread: getThreadContext(),
+              persona: gdata(remoteJid).personality || '',
+            })) || '😢 לא הצלחתי לענות כרגע — נסה שוב בעוד רגע.';
+            pushHistory(remoteJid, 'user', q, msg.pushName || '');
             pushHistory(remoteJid, 'assistant', ans);
             await sock.sendMessage(remoteJid, { text: ans });
             return;
@@ -6796,8 +8351,15 @@ const DOWNLOAD_DISABLED =
           }
           await sendTyping(sock, remoteJid, 1000);
           const history = chatHistory.get(remoteJid) || [];
-          const { text: ans } = await chatAI(styledPrompt(remoteJid, await enrichWithSearch(text)), history);
-          pushHistory(remoteJid, 'user', text);
+          const ans = (await aiChat(text, {
+            history,
+            sender: msg.pushName || '',
+            quoted: quotedText,
+            thread: getThreadContext(),
+            intent: aiIntent,
+            persona: gdata(remoteJid).personality || '',
+          })) || '😢 לא הצלחתי לענות כרגע — נסה שוב בעוד רגע.';
+          pushHistory(remoteJid, 'user', text, msg.pushName || '');
           pushHistory(remoteJid, 'assistant', ans);
           await sock.sendMessage(remoteJid, { text: ans });
         }

@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chatAI } from './ai-chat.js';
+import { chatAI, UTILITY } from './ai-chat.js';
 import { searchWeb } from './web-search.js';
 import { generateImage } from './ai-image.js';
 import { normalizeNaturalCommand, aiRouteCommand, KNOWN_FIRST } from './nlp.js';
@@ -71,15 +71,17 @@ setInterval(() => {
   } catch {}
 }, 600000).unref?.();
 const META_FILE = new URL('./site-meta.json', import.meta.url);
-let meta = { pins: {}, points: {}, rota: { members: [], idx: 0 } }; // roomId -> {id, text, from, at}
+let meta = { pins: {}, points: {}, rota: { members: [], idx: 0 }, blocks: {} }; // blocks: שם -> {at, by, reason}
 try {
   const d = JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
   if (d && typeof d === 'object') meta = {
     pins: (d.pins || (d.pinned ? { general: d.pinned } : {})),
     points: (d.points && typeof d.points === 'object') ? d.points : {},
     rota: (d.rota && typeof d.rota === 'object') ? { members: Array.isArray(d.rota.members) ? d.rota.members.slice(0, 50) : [], idx: Number(d.rota.idx) || 0 } : { members: [], idx: 0 },
+    blocks: (d.blocks && typeof d.blocks === 'object') ? d.blocks : {},
   };
 } catch {}
+const isBlocked = (name) => !!(name && meta.blocks && meta.blocks[name]);
 function saveMeta() {
   try { fs.writeFileSync(META_FILE, JSON.stringify(meta)); } catch {}
 }
@@ -378,7 +380,7 @@ ${String(s2).trim().slice(0, 1500)}
       if (histArr.length) prompt += `\nשיחה אחרונה:\n${histArr.join('\n')}\n\n`;
       prompt += `${job.from} שואל: ${q}`;
       const res = await Promise.race([
-        chatAI(prompt, []),
+        chatAI(prompt, [], { system: UTILITY, json: true, quality: 'fast', temperature: 0 }),
         new Promise((res) => setTimeout(() => res(null), 25000)),
       ]);
       answer = ((res && res.text) || '').trim().slice(0, 800);
@@ -870,7 +872,7 @@ async function cmdTrivia(rid, by) {
   let t = null;
   try {
     const { text } = await Promise.race([
-      chatAI('כתוב שאלת טריוויה בעברית עם 4 אפשרויות. החזר JSON בלבד: {"q":"...","opts":["...","...","...","..."],"a":0}. המספר a הוא אינדקס התשובה הנכונה (0-3).', []),
+      chatAI('כתוב שאלת טריוויה בעברית עם 4 אפשרויות. החזר JSON בלבד: {"q":"...","opts":["...","...","...","..."],"a":0}. המספר a הוא אינדקס התשובה הנכונה (0-3).', [], { system: UTILITY, json: true, quality: 'fast', temperature: 0 }),
       new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 20000)),
     ]);
     const j = JSON.parse((String(text || '').match(/\{[\s\S]*\}/) || [])[0] || 'null');
@@ -1069,11 +1071,20 @@ function handleFrame(ws, state, text) {
   if (!m || typeof m !== 'object') return;
   const st = clients.get(ws);
   const RH = () => getRoom(st.room).hist;
+  // 🚫 חסימה: משתמש חסום לא יכול לפעול (וגם מנותק מהחיבור הנוכחי)
+  if (st && isBlocked(st.name)) {
+    wsSend(ws, { t: 'err', msg: '🚫 הכניסה לחשבון הזה חסומה על ידי מנהל' });
+    try { ws.destroy(); } catch {}
+    clients.delete(ws);
+    broadcastUsers();
+    return;
+  }
   if (m.t === 'join') {
     if (st) return;
     const name = cleanName(m.name);
     if (!validName(name)) { wsSend(ws, { t: 'err', msg: 'שם לא תקין (2-20 תווים: עברית/אנגלית/ספרות)' }); return; }
     if (name.includes('מולטי בוט')) { wsSend(ws, { t: 'err', msg: 'השם הזה שמור לבוט 🤖' }); return; }
+    if (isBlocked(name)) { wsSend(ws, { t: 'err', msg: '🚫 הכניסה לחשבון הזה חסומה על ידי מנהל' }); return; }
     const mode = m.mode === 'register' ? 'register' : 'login';
     const pass = String(m.pass || '');
     const token = String(m.token || '');
@@ -1481,12 +1492,149 @@ function buildGallery() {
   return { items: final.slice(0, 500), counts, total: final.length };
 }
 
+// 📥 קריאת גוף בקשת POST כ-JSON (עם הגנת גודל)
+function readJsonBody(req, max = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > max) { reject(new Error('גדול מדי')); try { req.destroy(); } catch {} return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8') || '{}')); }
+      catch { reject(new Error('JSON לא תקין')); }
+    });
+    req.on('error', reject);
+  });
+}
+// 🔑 אימות מפתח מנהל: מגוף JSON / כותרת / query
+function adminKeyOk(req, u, body) {
+  const key = String((body && body.key) || u.searchParams.get('key') || req.headers['x-admin-key'] || '');
+  return !!key && key === ADMIN_KEY;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url || '/', 'http://x');
     if (u.pathname === '/api/export') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="multi-bot-chat.json"' });
       res.end(JSON.stringify({ exported_at: Date.now(), rooms: [...rooms.values()].map((r) => ({ id: r.id, name: r.name, count: r.hist.length, messages: r.hist })) }));
+      return;
+    }
+    // ---------- 👁️ צפייה בכל הצ'אטים (מנהל) ----------
+    if (u.pathname === '/api/chats') {
+      if (!adminKeyOk(req, u, null)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'אין הרשאה' }));
+        return;
+      }
+      const items = [];
+      for (const r of rooms.values()) {
+        for (const h of (r.hist || [])) items.push({ room: r.id, roomName: r.name || r.id, ...h });
+      }
+      items.sort((a, b) => (b.at || 0) - (a.at || 0));
+      const senders = {};
+      for (const it of items) {
+        const k = it.from || 'לא ידוע';
+        if (!senders[k]) senders[k] = { count: 0, lastAt: 0 };
+        senders[k].count++;
+        if ((it.at || 0) > senders[k].lastAt) senders[k].lastAt = it.at || 0;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({
+        ok: true, total: items.length, items, senders,
+        blocked: meta.blocks || {},
+        online: [...clients.values()].map((c) => ({ name: c.name, room: c.room })),
+        rooms: [...rooms.values()].map((r) => ({ id: r.id, name: r.name || r.id })),
+      }));
+      return;
+    }
+    // ---------- 🚫 חסימה/ביטול חסימה של משתמש ----------
+    if (u.pathname === '/api/block' && req.method === 'POST') {
+      let body = {};
+      try { body = await readJsonBody(req); } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String((e && e.message) || 'bad-request') }));
+        return;
+      }
+      if (!adminKeyOk(req, u, body)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'אין הרשאה' }));
+        return;
+      }
+      const name = cleanName(body.name);
+      if (!validName(name)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'שם לא תקין' }));
+        return;
+      }
+      if (String(body.action) === 'unblock') {
+        delete meta.blocks[name];
+        saveMeta();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, action: 'unblock', name }));
+        return;
+      }
+      meta.blocks[name] = {
+        at: Date.now(),
+        by: cleanName(body.by) || 'admin',
+        reason: String(body.reason || '').slice(0, 120),
+      };
+      saveMeta();
+      // ניתוק החיבורים של המשתמש החסום
+      let kicked = 0;
+      for (const [w, c] of clients) {
+        if (c.name === name) {
+          try { wsSend(w, { t: 'err', msg: '🚫 הכניסה לחשבון הזה חסומה על ידי מנהל' }); } catch {}
+          try { w.destroy(); } catch {}
+          clients.delete(w);
+          kicked++;
+        }
+      }
+      if (kicked) broadcastUsers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, action: 'block', name, kicked }));
+      return;
+    }
+    // ---------- 💬 תגובה של מנהל לצ'אט ----------
+    if (u.pathname === '/api/reply' && req.method === 'POST') {
+      let body = {};
+      try { body = await readJsonBody(req); } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String((e && e.message) || 'bad-request') }));
+        return;
+      }
+      if (!adminKeyOk(req, u, body)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'אין הרשאה' }));
+        return;
+      }
+      const rid = String(body.room || 'general');
+      const room = rooms.get(rid);
+      if (!room) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'החדר לא נמצא' }));
+        return;
+      }
+      const txt = String(body.text || '').replace(/[\u200e\u200f\u200b-\u200d\ufeff]/g, '').trim().slice(0, 500);
+      if (!txt) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'טקסט ריק' }));
+        return;
+      }
+      const from = cleanName(body.from) || 'מנהל';
+      const item = { id: `m${++msgSeq}-${Date.now().toString(36)}`, from, text: txt, at: Date.now(), admin: true };
+      if (body.reply && typeof body.reply.id === 'string') {
+        item.reply = { id: String(body.reply.id).slice(0, 40), from: cleanName(body.reply.from).slice(0, 20), text: String(body.reply.text || '').slice(0, 120) };
+      }
+      room.hist.push(item);
+      if (room.hist.length > MAX_HIST) room.hist = room.hist.slice(-MAX_HIST);
+      saveHist();
+      roomCast(rid, { t: 'msg', ...item, room: rid });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, item }));
       return;
     }
     if (u.pathname === '/api/media' && req.method === 'POST') {

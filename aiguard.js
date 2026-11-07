@@ -4,11 +4,11 @@
  * עקרונות נגד false-positive (לא מוחקים סתם):
  * 1. שלב מהיר וחינמי תמיד קודם (regex / רשימת מילים / פענוח QR מקומי).
  * 2. ה-AI רק *מאשר* מחיקה של מועמד — לעולם לא מוחק על סמך ניחוש.
- * 3. סריקת-AI מלאה של כל הודעה רק כשהטוגל aiguard דלוק (עם מכסה ומטמון).
- * 4. כשה-AI לא זמין — נופלים להתנהגות הישנה (לא משביתים הגנה).
+ * 3. סריקה חופשית מוגבלת לספאם/פרסום ברור — לא קללות ולא שיחה תמימה.
+ * 4. כשה-AI לא זמין או לא בטוח — *לא מוחקים* (עדיף להחמיץ מאשר למחוק סתם).
  */
 import crypto from 'node:crypto';
-import { chatAI } from './ai-chat.js';
+import { chatAI, UTILITY } from './ai-chat.js';
 import { describeImage } from './aimedia.js';
 import { hasBlockedLink, hasCurse } from './admin.js';
 
@@ -86,7 +86,7 @@ function judgeBudget() {
  * שופט AI לטקסט — מאשר/דוחה מחיקה.
  * @param {string} text — ההודעה
  * @param {object} opts — { stage1: 'link'|'curse'|'spam'|'qr'|null, allowDomains:[], extraWords:[] }
- * @returns {Promise<{del:boolean, kind:string, reason:string}|null>} — null = ה-AI לא זמין
+ * @returns {Promise<{del:boolean, kind:string, confidence:number|null, reason:string}|null>} — null = ה-AI לא זמין
  */
 export async function aiJudgeText(text, opts = {}) {
   const clean = String(text || '').trim().slice(0, 500);
@@ -103,24 +103,30 @@ export async function aiJudgeText(text, opts = {}) {
     ? `דומיינים מותרים בקבוצה (לא למחוק בגללם): ${(opts.allowDomains || []).join(', ')}.`
     : 'אין דומיינים מותרים — כל קישור חיצוני חשוד.';
   const prompt =
-    `אתה מנהל קבוצת וואטסאפ. החלט אם למחוק הודעה. ענה JSON בלבד, בדיוק בפורמט: {"del":true/false,"kind":"curse"/"link"/"spam"/"none","reason":"הסבר קצר בעברית"}\n` +
+    `אתה מנהל קבוצת וואטסאפ. החלט אם למחוק הודעה. ענה JSON בלבד, בדיוק בפורמט: {"del":true/false,"kind":"curse"/"link"/"spam"/"none","confidence":0.0-1.0,"reason":"הסבר קצר בעברית"}\n` +
     `כללים:\n` +
-    `- מחק קללות אמיתיות, עלבונות, שפה גסה מכוונת. אל תמחק מילים תמימות בהקשר נקי (למשל "כוס קפה", ציטוט חדשות, דיון חינוכי, "מפגר" כחלק ממילה אחרת).\n` +
+    `- ברירת המחדל היא *לא למחוק*. מחק רק כשיש הפרה ברורה ובוודאות גבוהה.\n` +
+    `- מחק קללות אמיתיות, עלבונות ישירים ושפה גסה מכוונת. אל תמחק מילים תמימות בהקשר נקי (למשל "כוס קפה"), סלנג חברי, בדיחות, ציטוט חדשות, דיון חינוכי, או "מפגר" כחלק ממילה אחרת.\n` +
+    `- אל תמחק הודעה שמדברת *על* מילה גסה, שואלת אם מותר להגיד אותה, מצטטת אותה, מגנה אותה או מלמדת עליה. דוגמאות לא למחיקה: "אפשר להגיד פאק?", "כתבתי טמבל עם ט". מחיקה רק כשהמילה משמשת כעלבון/קללה ישירה לאדם.\n` +
     `- מחק קישורי ספאם/פרסומת/הזמנות לקבוצות אחרות. אל תמחק קישור אם הוא חלק טבעי משיחה (למשל מישהו שולח סרטון רלוונטי לשאלה) — אלא אם ${opts.stage1 === 'link' || opts.stage1 === 'qr' ? 'הקבוצה במצב אנטי-קישורים ואז מחק כל קישור חיצוני' : 'מדובר בספאם ברור'}.\n` +
+    `- confidence = רמת הביטחון שלך (0.0 = ניחוש, 1.0 = בטוח לחלוטין). אם אינך בטוח — החזר del:false.\n` +
     `- ${allowNote}\n` +
     `- ${stageNote}\n` +
     `הודעה לבדיקה: """${clean}"""`;
   try {
     const { text: ans } = await Promise.race([
-      chatAI(prompt, []),
+      chatAI(prompt, [], { system: UTILITY, json: true, quality: 'fast', temperature: 0 }),
       new Promise((_, rej) => setTimeout(() => rej(new Error('judge-timeout')), 20000)),
     ]);
     const m = String(ans || '').match(/\{[\s\S]*\}/);
     if (!m) return null;
     const j = JSON.parse(m[0]);
+    const rawConf = Number(j.confidence);
+    const confidence = Number.isFinite(rawConf) ? Math.max(0, Math.min(1, rawConf)) : null;
     const verdict = {
       del: j.del === true,
       kind: ['curse', 'link', 'spam'].includes(j.kind) ? j.kind : (j.del ? (opts.stage1 || 'spam') : 'none'),
+      confidence,
       reason: String(j.reason || '').slice(0, 120),
     };
     cacheSet(key, verdict);

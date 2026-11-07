@@ -67,7 +67,7 @@ export async function describeImage(imageBuffer, question = '') {
           model: 'qwen/qwen3.8-27b',
           messages: [{ role: 'user', content: [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:${mime};base64,${b64.slice(0, 500000)}` } },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } },
           ] }],
           max_tokens: 500, temperature: 0.3,
         }),
@@ -81,7 +81,41 @@ export async function describeImage(imageBuffer, question = '') {
       console.warn('Groq vision נכשל, עובר הלאה:', (e.message || '').slice(0, 100));
     }
   }
-  // 2) Pollinations (דורש יתרה)
+  // 2) Gemini (חינמי — נותן גיבוי כש-Groq חוטף 429)
+  if (config.GEMINI_API_KEY) {
+    try {
+      const model = config.GEMINI_MODEL || 'gemini-3.5-flash';
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.GEMINI_API_KEY)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mime, data: b64 } },
+              ],
+            }],
+            generationConfig: { maxOutputTokens: 500, temperature: 0.3, thinkingConfig: { thinkingBudget: 0 } },
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`Gemini-vision ${res.status}`);
+      const j = await res.json();
+      const text = j?.candidates?.[0]?.content?.parts
+        ?.filter((p) => !p.thought)
+        ?.map((p) => p.text || '')
+        .join('')
+        .trim();
+      if (!text) throw new Error('תיאור ריק');
+      return text;
+    } catch (e) {
+      console.warn('Gemini vision נכשל, עובר הלאה:', (e.message || '').slice(0, 100));
+    }
+  }
+  // 3) Pollinations (דורש יתרה)
   if (config.POLLINATIONS_API_KEY) {
     const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
       method: 'POST',
@@ -95,7 +129,7 @@ export async function describeImage(imageBuffer, question = '') {
           role: 'user',
           content: [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:${mime};base64,${b64.slice(0, 400000)}` } },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } },
           ],
         }],
         max_tokens: 400,
@@ -250,6 +284,132 @@ export async function downloadYouTubeVideo(videoUrl, maxMB = 50) {
     throw lastErr;
   } finally {
     fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+/* ---------- הורדת וידאו מכל אתר/קישור ש-yt-dlp תומך בו ---------- */
+export async function downloadVideoFromUrl(videoUrl, maxMB = 15) {
+  const url = String(videoUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error('BAD_URL');
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ytdlu-'));
+  try {
+    // 1) קישור ישיר לקובץ וידאו (mp4/mkv/webm/mov) — ניסיון הורדה ישיר ומהיר
+    if (/\.(mp4|mkv|webm|mov|m4v)(\?|#|$)/i.test(url)) {
+      try {
+        const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60000) });
+        const ct = String(res.headers.get('content-type') || '');
+        const len = Number(res.headers.get('content-length') || 0);
+        if (res.ok && (ct.includes('video') || ct.includes('octet-stream')) && len > 50000 && len <= maxMB * 1024 * 1024) {
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (buf.length > 50000) {
+            const nm = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'video');
+            return { buffer: buf, title: nm.slice(0, 80), mime: ct.split(';')[0] || 'video/mp4' };
+          }
+        }
+      } catch {}
+    }
+    // 2) כותרת בלבד
+    let title = 'video';
+    try {
+      const meta = await execFileAsync(
+        ytDlpBin(),
+        ['--skip-download', '--no-playlist', '--no-warnings', '--print', '%(title)s', url],
+        { timeout: 60000, maxBuffer: 1024 * 1024 }
+      );
+      title = (meta.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean)[0] || title;
+    } catch {}
+    // 3) הורדה דרך yt-dlp — קודם איכות קטנה וקודק WhatsApp (H.264/AAC), ואז נמוך יותר
+    const attempts = [
+      ['-f', 'bv*[height<=480][vcodec^=avc1]+ba[acodec^=mp4a][abr<=64]/b[height<=480][ext=mp4]/b[height<=480]'],
+      ['-f', 'bv*[height<=360]+ba[abr<=64]/ba/b[height<=360]'],
+      ['-f', 'bv*[height<=240]+ba[abr<=64]/ba/b[height<=240]'],
+      ['-f', 'bv*[height<=144]+ba[abr<=48]/ba/b[height<=144]'],
+      ['-f', 'b'],
+    ];
+    let lastErr = new Error('DOWNLOAD_FAILED');
+    for (let a = 0; a < attempts.length; a++) {
+      const sub = path.join(dir, `a${a}`);
+      await fs.promises.mkdir(sub, { recursive: true });
+      try {
+        await execFileAsync(
+          ytDlpBin(),
+          [
+            ...attempts[a],
+            '--merge-output-format', 'mp4',
+            '--no-playlist', '--max-filesize', `${maxMB}M`,
+            '--no-warnings', '--retries', '2', '--fragment-retries', '2',
+            '--socket-timeout', '30', '--concurrent-fragments', '4',
+            '-o', path.join(sub, 'video.%(ext)s'), url,
+          ],
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+        );
+        const files = (await fs.promises.readdir(sub)).filter((f) => /\.(mp4|mkv|webm|mov|m4v)$/i.test(f));
+        if (!files.length) throw new Error('NO_FILE');
+        let fp = path.join(sub, files[0]);
+        // אימות קודקים — WhatsApp הכי יציב עם H.264 + AAC
+        let vcodec = '';
+        let acodec = '';
+        try {
+          const vp = await execFileAsync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', fp], { timeout: 30000, maxBuffer: 1024 * 1024 });
+          vcodec = String(vp.stdout || '').trim().split('\n')[0];
+          const ap = await execFileAsync('ffprobe', ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', fp], { timeout: 30000, maxBuffer: 1024 * 1024 });
+          acodec = String(ap.stdout || '').trim().split('\n')[0];
+        } catch {}
+        if (vcodec && (vcodec !== 'h264' || (acodec && acodec !== 'aac'))) {
+          const out = path.join(sub, 'wa.mp4');
+          await execFileAsync('ffmpeg', [
+            '-y', '-i', fp,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
+            '-vf', 'scale=trunc(min(640\\,iw)/2)*2:-2',
+            '-c:a', 'aac', '-b:a', '96k',
+            '-movflags', '+faststart',
+            out,
+          ], { timeout: 240000, maxBuffer: 10 * 1024 * 1024 });
+          fp = out;
+        }
+        const buf = await fs.promises.readFile(fp);
+        if (!buf.length || buf.length < 50000) throw new Error('EMPTY_FILE');
+        if (buf.length > maxMB * 1024 * 1024) throw new Error('TOO_BIG');
+        return { buffer: buf, title: title.slice(0, 80), mime: 'video/mp4' };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr;
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+/* ---------- העלאת קובץ גדול לשירות אירוח זמני (Litterbox) וקבלת קישור ---------- */
+export async function uploadToLitterbox(buffer, filename = 'video.mp4', time = '72h') {
+  if (!buffer || buffer.length < 1000) throw new Error('EMPTY_FILE');
+  const fd = new FormData();
+  fd.append('reqtype', 'fileupload');
+  fd.append('time', time);
+  fd.append('fileToUpload', new Blob([buffer], { type: 'video/mp4' }), String(filename || 'video.mp4'));
+  const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+    method: 'POST',
+    body: fd,
+    signal: AbortSignal.timeout(600000),
+  });
+  const text = (await res.text()).trim();
+  if (!/^https?:\/\//i.test(text)) throw new Error(`LITTERBOX: ${text.slice(0, 120)}`);
+  return text;
+}
+
+/* ---------- קישור הורדה ישיר (גיבוי כשהוואטסאפ לא מצליח להעלות קובץ) ---------- */
+export async function resolveMediaUrls(videoUrl) {
+  const url = String(videoUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) return [];
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin(),
+      ['-g', '-f', 'b[height<=720][ext=mp4]/b[height<=720]/b', '--no-playlist', '--no-warnings', '--socket-timeout', '20', url],
+      { timeout: 90000, maxBuffer: 4 * 1024 * 1024 }
+    );
+    return String(stdout || '').split('\n').map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
+  } catch {
+    return [];
   }
 }
 /* ---------- וידאו AI (דורש מפתח) ---------- */

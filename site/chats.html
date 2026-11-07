@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070b16">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁️</text></svg>">
+<title>צפייה בצ'אטים · מולטי בוט</title>
+<style>
+:root{
+  --mb-1:#070b16; --mb-2:#0c1324; --mb-3:#141c33;
+  --glass:rgba(255,255,255,.055); --glass2:rgba(255,255,255,.09);
+  --stroke:rgba(255,255,255,.10); --stroke2:rgba(255,255,255,.16);
+  --text:#eaf1fb; --muted:rgba(234,241,251,.58);
+  --accent:#31e6a6; --accent2:#6c8cff; --accent3:#38bdf8;
+  --err:#ff5d7a; --warn:#ffd166;
+  --glow:0 8px 30px rgba(49,230,166,.24);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Inter',"Segoe UI",system-ui,Arial,sans-serif;
+  background:var(--mb-1); color:var(--text); min-height:100dvh;
+  background-image:
+    radial-gradient(38% 42% at 12% 6%, rgba(49,230,166,.20), transparent 62%),
+    radial-gradient(42% 46% at 88% 2%, rgba(108,140,255,.24), transparent 62%),
+    radial-gradient(50% 50% at 80% 94%, rgba(56,189,248,.16), transparent 60%),
+    linear-gradient(160deg,var(--mb-1),var(--mb-2) 55%,var(--mb-3));
+  background-attachment:fixed;
+}
+button,input,select,textarea{font-family:inherit;font-size:14px;color:var(--text)}
+button{cursor:pointer}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:4px}
+.glass{background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
+
+/* ===== header ===== */
+header{position:sticky;top:0;z-index:20;background:rgba(11,17,32,.72);border-bottom:1px solid var(--stroke);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);padding:12px 16px}
+.hd-in{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:22px;color:#04160f;box-shadow:var(--glow);flex-shrink:0}
+.tt{flex-grow:1;min-width:140px}
+.tt b{font-size:17px;display:block}
+.tt span{font-size:12.5px;color:var(--muted)}
+.btn{border:1px solid var(--stroke);border-radius:12px;padding:9px 15px;background:var(--glass);color:var(--text);font-weight:600}
+.btn:hover{background:var(--glass2)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04160f;border-color:transparent;box-shadow:var(--glow)}
+.btn.danger{background:linear-gradient(135deg,#ff5d7a,#ff8a5b);color:#1a0510;border-color:transparent}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.key-in{width:170px;padding:9px 12px;border-radius:12px;border:1px solid var(--stroke);background:var(--glass)}
+
+/* ===== layout ===== */
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+.stats{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px}
+.stat{background:var(--glass);border:1px solid var(--stroke);border-radius:16px;padding:11px 16px;min-width:104px;flex-shrink:0;text-align:center;backdrop-filter:blur(14px)}
+.stat b{font-size:21px;display:block;color:var(--accent)}
+.stat small{font-size:11.5px;color:var(--muted)}
+.stat.b2 b{color:var(--accent2)}
+.stat.b3 b{color:var(--accent3)}
+.stat.b4 b{color:var(--err)}
+
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.filters input,.filters select{padding:10px 13px;border-radius:12px;border:1px solid var(--stroke);background:var(--glass);outline:none;min-width:0}
+.filters input:focus,.filters select:focus{border-color:var(--accent)}
+.filters input[type=text]{flex:1 1 220px;min-width:180px}
+.filters select{flex:0 1 auto;max-width:190px}
+.toggle{display:flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;background:var(--glass);border:1px solid var(--stroke);font-size:13px;cursor:pointer;white-space:nowrap}
+.toggle input{accent-color:var(--accent);cursor:pointer}
+
+.cols{display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+
+.panel{border-radius:18px;overflow:hidden}
+.panel-hd{padding:12px 15px;border-bottom:1px solid var(--stroke);display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--glass)}
+.panel-hd b{font-size:14.5px}
+.panel-hd small{color:var(--muted);font-size:12px}
+
+/* ===== messages ===== */
+#list{max-height:66vh;overflow-y:auto;padding:8px}
+.msg{display:flex;gap:11px;padding:10px 11px;border-radius:14px;border:1px solid transparent;transition:background .15s}
+.msg:hover{background:var(--glass);border-color:var(--stroke)}
+.msg.me{background:rgba(108,140,255,.07)}
+.ava{width:36px;height:36px;flex-shrink:0;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;background:linear-gradient(135deg,var(--accent2),var(--accent3));color:#04160f}
+.ava.bot{background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.mbody{flex:1;min-width:0}
+.mtop{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:3px}
+.mtop b{font-size:13.5px}
+.mtop .room{font-size:11px;color:var(--accent3);background:rgba(56,189,248,.14);padding:2px 8px;border-radius:9px}
+.mtop .time{font-size:11px;color:var(--muted);margin-inline-start:auto}
+.mtop .tag{font-size:10.5px;padding:1.5px 7px;border-radius:8px;background:rgba(255,255,255,.09);color:var(--muted)}
+.mtop .tag.adm{background:rgba(49,230,166,.16);color:var(--accent)}
+.mtop .tag.blk{background:rgba(255,93,122,.18);color:var(--err)}
+.mtext{font-size:14px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
+.mtext .ph{color:var(--muted);font-style:italic}
+.mmedia{font-size:12px;color:var(--muted);margin-top:4px;display:inline-flex;gap:6px;align-items:center;background:var(--glass);border:1px solid var(--stroke);padding:3px 9px;border-radius:9px}
+.mquote{font-size:12px;color:var(--muted);border-inline-start:3px solid var(--accent2);padding-inline-start:8px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.macts{display:flex;gap:6px;margin-top:6px}
+.mini{border:1px solid var(--stroke);background:var(--glass);border-radius:9px;padding:4px 10px;font-size:12px}
+.mini:hover{background:var(--glass2)}
+.mini.red{color:var(--err);border-color:rgba(255,93,122,.4)}
+.mini.grn{color:var(--accent);border-color:rgba(49,230,166,.4)}
+
+/* ===== senders ===== */
+#senders{max-height:44vh;overflow-y:auto;padding:8px}
+.srow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:13px;border:1px solid transparent}
+.srow:hover{background:var(--glass);border-color:var(--stroke)}
+.srow .sinfo{flex:1;min-width:0}
+.srow .sinfo b{font-size:13.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .sinfo small{font-size:11.5px;color:var(--muted)}
+.srow.blocked .sinfo b{color:var(--err)}
+
+/* ===== composer ===== */
+.composer{padding:13px 15px;border-top:1px solid var(--stroke);background:var(--glass)}
+.composer .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.composer select,.composer input,.composer textarea{padding:9px 12px;border-radius:12px;border:1px solid var(--stroke);background:rgba(255,255,255,.05);outline:none;width:100%}
+.composer textarea{resize:vertical;min-height:62px;line-height:1.5}
+.composer select:focus,.composer input:focus,.composer textarea:focus{border-color:var(--accent)}
+.reply-chip{display:none;align-items:center;gap:8px;font-size:12px;color:var(--accent3);background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.3);border-radius:11px;padding:6px 11px;margin-bottom:8px}
+.reply-chip.on{display:flex}
+.reply-chip .x{margin-inline-start:auto;background:none;border:0;color:inherit;font-size:15px;cursor:pointer}
+
+#empty{text-align:center;color:var(--muted);padding:46px 16px;font-size:14.5px}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:22px 12px}
+
+/* ===== toast ===== */
+#toasts{position:fixed;left:0;right:0;bottom:20px;z-index:90;display:flex;flex-direction:column;align-items:center;gap:9px;pointer-events:none;padding:0 14px}
+.toast{pointer-events:auto;max-width:min(92vw,420px);padding:12px 16px;border-radius:15px;background:rgba(11,17,32,.9);border:1px solid var(--stroke);box-shadow:0 18px 50px rgba(0,0,0,.5);font-size:13.5px;animation:tin .3s cubic-bezier(.2,.9,.3,1.2)}
+.toast.err{border-color:rgba(255,93,122,.5)}
+@keyframes tin{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="hd-in">
+    <div class="logo">👁️</div>
+    <div class="tt"><b>צפייה בכל הצ'אטים</b><span>מסך מנהל — סינון, חסימה ותגובה</span></div>
+    <input class="key-in" id="keyIn" type="password" placeholder="מפתח מנהל" autocomplete="off">
+    <button class="btn primary" id="loadBtn">🔄 טען</button>
+    <a class="btn" href="/gallery.html">🖼️ גלריה</a>
+    <a class="btn ghost" href="/">💬 לצ'אט</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats" id="stats"></div>
+
+  <div class="filters">
+    <input type="text" id="fq" placeholder="🔍 חיפוש בטקסט...">
+    <select id="fSender"><option value="">כל השולחים</option></select>
+    <select id="fRoom"><option value="">כל החדרים</option></select>
+    <select id="fType">
+      <option value="all">הכול</option>
+      <option value="human">◻️ אנשים בלבד</option>
+      <option value="bot">🤖 בוט בלבד</option>
+      <option value="blocked">🚫 חסומים בלבד</option>
+    </select>
+    <label class="toggle"><input type="checkbox" id="fAuto"> רענון אוטומטי</label>
+    <button class="btn" id="clearBtn">✖️ ניקוי</button>
+  </div>
+
+  <div class="cols">
+    <div class="panel glass">
+      <div class="panel-hd"><b>📨 הודעות</b><small id="cnt"></small></div>
+      <div id="list"><div id="empty"><span class="spin">⏳</span><br>הזן מפתח מנהל ולחץ "טען"</div></div>
+      <div class="composer">
+        <div class="reply-chip" id="replyChip"><span id="replyTxt"></span><button class="x" id="replyX">✕</button></div>
+        <div class="row">
+          <select id="cRoom"></select>
+          <input type="text" id="cFrom" placeholder="השם שיוצג (ברירת מחדל: מנהל)" style="flex:1 1 180px">
+        </div>
+        <textarea id="cText" placeholder="כתוב תגובה ושלח לצ'אט..."></textarea>
+        <div class="row" style="margin:8px 0 0">
+          <button class="btn primary" id="sendBtn" style="flex:1">📤 שלח תגובה</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel glass">
+      <div class="panel-hd"><b>👥 שולחים</b><small id="scnt"></small></div>
+      <div id="senders"><div id="empty2" style="padding:26px;text-align:center;color:var(--muted);font-size:13.5px">אין נתונים</div></div>
+    </div>
+  </div>
+</div>
+
+<footer>מולטי בוט 🌐 · מסך ניהול פנימי (noindex)</footer>
+<div id="toasts"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const BOT = 'מולטי בוט';
+
+  let KEY = new URLSearchParams(location.search).get('key') || sessionStorage.getItem('mb-admin-key') || '';
+  let DATA = { items: [], senders: {}, blocked: {}, rooms: [], online: [] };
+  let replyTo = null;
+
+  $('keyIn').value = KEY;
+
+  function toast(msg, err) {
+    const el = document.createElement('div');
+    el.className = 'toast' + (err ? ' err' : '');
+    el.textContent = msg;
+    $('toasts').appendChild(el);
+    while ($('toasts').children.length > 3) $('toasts').firstChild.remove();
+    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 250); }, 3200);
+  }
+
+  function timeHe(at) {
+    try {
+      return new Date(at).toLocaleString('he-IL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    } catch { return ''; }
+  }
+
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    return j;
+  }
+
+  function urlWithKey(p) { return p + (p.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(KEY); }
+
+  async function load() {
+    KEY = ($('keyIn').value || '').trim();
+    if (!KEY) { toast('הזן מפתח מנהל', true); $('keyIn').focus(); return; }
+    sessionStorage.setItem('mb-admin-key', KEY);
+    $('list').innerHTML = '<div id="empty"><span class="spin">⏳</span><br>טוען...</div>';
+    try {
+      DATA = await api(urlWithKey('/api/chats'));
+      if (DATA.ok === false) throw new Error(DATA.error || 'שגיאה');
+      buildFilters();
+      renderStats();
+      render();
+      toast('נטענו ' + DATA.total + ' הודעות');
+    } catch (e) {
+      $('list').innerHTML = '<div id="empty">😢 ' + esc(e.message) + '</div>';
+      toast('טעינה נכשלה: ' + e.message, true);
+    }
+  }
+
+  function buildFilters() {
+    const fs = $('fSender'), fr = $('fRoom'), cr = $('cRoom');
+    const keepS = fs.value, keepR = fr.value;
+    fs.innerHTML = '<option value="">כל השולחים</option>' + Object.keys(DATA.senders)
+      .sort((a, b) => DATA.senders[b].count - DATA.senders[a].count)
+      .map((n) => '<option value="' + esc(n) + '">' + esc(n) + ' (' + DATA.senders[n].count + ')</option>').join('');
+    fr.innerHTML = '<option value="">כל החדרים</option>' + DATA.rooms
+      .map((r) => '<option value="' + esc(r.id) + '">' + esc(r.name) + '</option>').join('');
+    const keepC = cr.value;
+    cr.innerHTML = DATA.rooms.map((r) => '<option value="' + esc(r.id) + '">' + esc(r.name) + '</option>').join('');
+    fs.value = keepS; fr.value = keepR; if (keepC) cr.value = keepC;
+    renderSenders();
+  }
+
+  function filtered() {
+    const q = ($('fq').value || '').trim().toLowerCase();
+    const s = $('fSender').value, r = $('fRoom').value, t = $('fType').value;
+    return DATA.items.filter((m) => {
+      const isBot = String(m.from || '').includes(BOT);
+      if (t === 'human' && isBot) return false;
+      if (t === 'bot' && !isBot) return false;
+      if (t === 'blocked' && !DATA.blocked[m.from]) return false;
+      if (s && m.from !== s) return false;
+      if (r && m.room !== r) return false;
+      if (q && !(String(m.text || '').toLowerCase().includes(q) ||
+                 String(m.from || '').toLowerCase().includes(q) ||
+                 String(m.roomName || '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+
+  function avaFor(name) {
+    const isBot = String(name || '').includes(BOT);
+    if (isBot) return '<div class="ava bot">🤖</div>';
+    return '<div class="ava">' + esc(String(name || '?').slice(0, 2)) + '</div>';
+  }
+
+  function render() {
+    const list = filtered();
+    $('cnt').textContent = list.length + ' מתוך ' + DATA.total;
+    if (!list.length) { $('list').innerHTML = '<div id="empty">😕 לא נמצאו הודעות</div>'; return; }
+    const html = list.map((m) => {
+      const isBot = String(m.from || '').includes(BOT);
+      const blocked = DATA.blocked[m.from];
+      const text = String(m.text || '');
+      const media = m.media ? '<div class="mmedia">📎 ' + esc(m.media.kind || 'file') + ' · ' + esc(m.media.url) + '</div>' : '';
+      const quote = m.reply ? '<div class="mquote">↩ ' + esc(m.reply.from) + ': ' + esc(m.reply.text) + '</div>' : '';
+      const tags =
+        '<span class="room">' + esc(m.roomName || m.room) + '</span>' +
+        (m.admin ? '<span class="tag adm">מנהל</span>' : '') +
+        (m.edited ? '<span class="tag">נערך</span>' : '') +
+        (blocked ? '<span class="tag blk">🚫 חסום</span>' : '');
+      const label = text || (m.media ? '📎 ' + (m.media.kind || 'קובץ') : 'הודעה ריקה');
+      const acts =
+        '<div class="macts">' +
+          '<button class="mini" data-act="reply" data-id="' + esc(m.id) + '" data-from="' + esc(m.from) + '" data-room="' + esc(m.room) + '" data-text="' + esc(label.slice(0, 60)) + '">↩ הגב</button>' +
+          '<button class="mini" data-act="pick" data-id="' + esc(m.id) + '" data-room="' + esc(m.room) + '">🎯 לקח חדר</button>' +
+          (isBot ? '' : (blocked
+            ? '<button class="mini grn" data-act="unblock" data-name="' + esc(m.from) + '">✅ בטל חסימה</button>'
+            : '<button class="mini red" data-act="block" data-name="' + esc(m.from) + '">🚫 חסום</button>')) +
+        '</div>';
+      return '<div class="msg' + (isBot ? '' : ' me') + '">' + avaFor(m.from) +
+        '<div class="mbody">' +
+          '<div class="mtop"><b>' + esc(m.from || '?') + '</b>' + tags +
+            '<span class="time">' + esc(timeHe(m.at)) + '</span></div>' +
+          quote +
+          '<div class="mtext">' + (text ? esc(text) : (media ? '' : '<span class="ph">(הודעה ריקה)</span>')) + '</div>' +
+          media + acts +
+        '</div></div>';
+    }).join('');
+    $('list').innerHTML = html;
+    bindList();
+  }
+
+  function renderSenders() {
+    const names = Object.keys(DATA.senders || {}).sort((a, b) => DATA.senders[b].count - DATA.senders[a].count);
+    $('scnt').textContent = names.length + ' שולחים';
+    if (!names.length) { $('senders').innerHTML = '<div style="padding:26px;text-align:center;color:var(--muted)">אין נתונים</div>'; return; }
+    $('senders').innerHTML = names.map((n) => {
+      const s = DATA.senders[n];
+      const blocked = DATA.blocked[n];
+      const isBot = String(n).includes(BOT);
+      return '<div class="srow' + (blocked ? ' blocked' : '') + '">' + avaFor(n) +
+        '<div class="sinfo"><b>' + esc(n) + '</b><small>' + s.count + ' הודעות · ' + esc(timeHe(s.lastAt)) + (blocked ? ' · 🚫' : '') + '</small></div>' +
+        (isBot ? '' : (blocked
+          ? '<button class="mini grn" data-act="unblock" data-name="' + esc(n) + '">✅</button>'
+          : '<button class="mini red" data-act="block" data-name="' + esc(n) + '">🚫</button>')) +
+      '</div>';
+    }).join('');
+    $('senders').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => act(b.dataset.act, b.dataset.name));
+  }
+
+  function renderStats() {
+    const blockedN = Object.keys(DATA.blocked || {}).length;
+    const humans = Object.keys(DATA.senders || {}).filter((n) => !String(n).includes(BOT)).length;
+    const onlineN = (DATA.online || []).length;
+    $('stats').innerHTML =
+      '<div class="stat"><b>' + (DATA.total || 0) + '</b><small>📨 הודעות</small></div>' +
+      '<div class="stat b2"><b>' + humans + '</b><small>👥 שולחים</small></div>' +
+      '<div class="stat b3"><b>' + onlineN + '</b><small>🟢 מחוברים</small></div>' +
+      '<div class="stat b4"><b>' + blockedN + '</b><small>🚫 חסומים</small></div>';
+  }
+
+  async function act(action, name) {
+    if (!name) return;
+    const doIt = action === 'block'
+      ? confirm('לחסום את "' + name + '"? הוא ינותק ולא יוכל להתחבר.')
+      : true;
+    if (!doIt) return;
+    try {
+      const j = await api('/api/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: KEY, name, action }),
+      });
+      if (action === 'block') {
+        DATA.blocked[name] = { at: Date.now(), by: 'admin' };
+        toast('🚫 "' + name + '" נחסם' + (j.kicked ? ' (נותק מהחיבור)' : ''));
+      } else {
+        delete DATA.blocked[name];
+        toast('✅ "' + name + '" בוטלה החסימה');
+      }
+      renderStats(); renderSenders(); render();
+    } catch (e) { toast('שגיאה: ' + e.message, true); }
+  }
+
+  function setReply(o) {
+    replyTo = o;
+    $('replyChip').classList.toggle('on', !!o);
+    if (o) {
+      $('replyTxt').textContent = '↩ הגב ל-' + o.from + ': ' + (o.text || 'הודעה ריקה');
+      $('cRoom').value = o.room;
+      $('cText').focus();
+    }
+  }
+
+  function bindList() {
+    $('list').querySelectorAll('[data-act]').forEach((b) => {
+      b.onclick = () => {
+        const a = b.dataset.act;
+        if (a === 'block' || a === 'unblock') act(a, b.dataset.name);
+        else if (a === 'reply') setReply({ id: b.dataset.id, from: b.dataset.from, room: b.dataset.room, text: b.dataset.text });
+        else if (a === 'pick') { $('cRoom').value = b.dataset.room; toast('החדר נבחר'); }
+      };
+    });
+  }
+
+  async function send() {
+    const text = ($('cText').value || '').trim();
+    if (!text) { toast('כתוב טקסט', true); return; }
+    const room = $('cRoom').value;
+    if (!room) { toast('בחר חדר', true); return; }
+    $('sendBtn').disabled = true;
+    try {
+      const j = await api('/api/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: KEY, room, text,
+          from: ($('cFrom').value || '').trim() || 'מנהל',
+          reply: replyTo ? { id: replyTo.id, from: replyTo.from, text: replyTo.text } : null,
+        }),
+      });
+      if (j.ok) {
+        DATA.items.unshift(j.item);
+        const n = j.item.from;
+        if (!DATA.senders[n]) DATA.senders[n] = { count: 0, lastAt: 0 };
+        DATA.senders[n].count++;
+        DATA.senders[n].lastAt = j.item.at;
+        DATA.total = (DATA.total || 0) + 1;
+        $('cText').value = '';
+        setReply(null);
+        renderStats(); renderSenders(); render();
+        toast('📤 נשלח לצ\'אט');
+      } else throw new Error(j.error || 'נכשל');
+    } catch (e) { toast('שגיאה: ' + e.message, true); }
+    finally { $('sendBtn').disabled = false; }
+  }
+
+  // ---- events ----
+  $('loadBtn').onclick = load;
+  $('keyIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
+  ['fq', 'fSender', 'fRoom', 'fType'].forEach((id) => {
+    $(id).addEventListener('input', render);
+    $(id).addEventListener('change', render);
+  });
+  $('clearBtn').onclick = () => { $('fq').value = ''; $('fSender').value = ''; $('fRoom').value = ''; $('fType').value = 'all'; render(); };
+  $('sendBtn').onclick = send;
+  $('replyX').onclick = () => setReply(null);
+  $('fAuto').addEventListener('change', (e) => {
+    if (e.target.checked) { window.__auto = setInterval(load, 8000); toast('רענון אוטומטי כל 8 שנ׳'); }
+    else { clearInterval(window.__auto); window.__auto = null; }
+  });
+
+  renderStats();
+  if (KEY) load();
+})();
+</script>
+</body>
+</html>
