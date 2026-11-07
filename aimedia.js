@@ -397,6 +397,69 @@ export async function uploadToLitterbox(buffer, filename = 'video.mp4', time = '
   return text;
 }
 
+/* ---------- דחיסת וידאו לגודל קטן כדי לעבור העלאה בוואטסאפ ---------- */
+export async function compressVideoForWhatsApp(buffer, targetMB = 2) {
+  if (!buffer || buffer.length < 1000) throw new Error('EMPTY_FILE');
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wacompress-'));
+  try {
+    const input = path.join(dir, 'in.mp4');
+    await fs.promises.writeFile(input, buffer);
+    let dur = 0;
+    try {
+      const p = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', input], { timeout: 30000, maxBuffer: 1024 * 1024 });
+      dur = parseFloat(String(p.stdout || '').trim()) || 0;
+    } catch {}
+    // סרטון ארוך מדי לא יכול להיכנס ל-2MB באיכות סבירה
+    if (dur > 480) throw new Error('TOO_LONG_TO_COMPRESS');
+
+    const encode = async (height, fps, audioKbps, factor) => {
+      const targetBits = Math.max(70000, Math.floor(targetMB * 8 * 1024 * 1024 * 0.82 * factor));
+      const totalKbps = dur > 0 ? Math.max(60, Math.floor(targetBits / dur / 1000)) : 500;
+      const videoKbps = Math.max(24, totalKbps - audioKbps);
+      const out = path.join(dir, `out-${height}-${fps}.mp4`);
+      await execFileAsync('ffmpeg', [
+        '-y', '-i', input,
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-b:v', `${videoKbps}k`,
+        '-maxrate', `${Math.max(50, Math.floor(videoKbps * 1.3))}k`,
+        '-bufsize', `${Math.max(120, videoKbps * 2)}k`,
+        '-r', String(fps),
+        '-vf', `scale=trunc(min(${height}\\,iw)/2)*2:-2`,
+        '-c:a', 'aac', '-b:a', `${audioKbps}k`, '-ac', '1',
+        '-movflags', '+faststart',
+        out,
+      ], { timeout: 300000, maxBuffer: 10 * 1024 * 1024 });
+      const b = await fs.promises.readFile(out);
+      if (!b.length || b.length < 20000) throw new Error('COMPRESS_EMPTY');
+      return b;
+    };
+
+    let buf = await encode(480, 24, 40, 1);
+    const limit = targetMB * 1024 * 1024;
+    if (buf.length > limit * 1.15) buf = await encode(360, 20, 24, 0.65);
+    if (buf.length > limit * 1.3) throw new Error('TOO_BIG_TO_COMPRESS');
+    return { buffer: buf, mime: 'video/mp4' };
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/* ---------- העלאה לגיבוי קבוע (Catbox) אם Litterbox נכשל ---------- */
+export async function uploadToCatbox(buffer, filename = 'video.mp4') {
+  if (!buffer || buffer.length < 1000) throw new Error('EMPTY_FILE');
+  const fd = new FormData();
+  fd.append('reqtype', 'fileupload');
+  fd.append('fileToUpload', new Blob([buffer], { type: 'video/mp4' }), String(filename || 'video.mp4'));
+  const res = await fetch('https://catbox.moe/user/api.php', {
+    method: 'POST',
+    body: fd,
+    signal: AbortSignal.timeout(600000),
+  });
+  const text = (await res.text()).trim();
+  if (!/^https?:\/\//i.test(text)) throw new Error(`CATBOX: ${text.slice(0, 120)}`);
+  return text;
+}
+
 /* ---------- קישור הורדה ישיר (גיבוי כשהוואטסאפ לא מצליח להעלות קובץ) ---------- */
 export async function resolveMediaUrls(videoUrl) {
   const url = String(videoUrl || '').trim();
