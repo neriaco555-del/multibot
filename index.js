@@ -3680,6 +3680,22 @@ async function handleChatMessage(sock, botJid, msg) {
           }
         }
 
+        // 🎬 קבוצת "בוט הורדת סרטונים": כל טקסט חופשי (גם תגובה/תיוג) = חיפוש סרטון.
+        // חייב להיות לפני שער "רק עם !/תגובה", אחרת הודעות רגילות נבלעות.
+        if (isGroup && config.MOVIE_GROUP && remoteJid === config.MOVIE_GROUP && !msg.key.fromMe && rawText) {
+          const _mvText = String(rawText).replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim();
+          if (_mvText && !_mvText.startsWith(prefix) && _mvText.length >= 2 &&
+              !/^\d+$/.test(_mvText) && !_mvText.startsWith('@') && !MOVIE_CHAT_NOISE.test(_mvText)) {
+            const gdMv = gdata(remoteJid);
+            const _mutedMv = !!(gdMv.botMutedUntil && Date.now() < gdMv.botMutedUntil);
+            if (!_mutedMv && isFeatureOn(gdMv, 'video')) {
+              const mvSender = msg.key.participant || remoteJid;
+              await offerMovieDownloads(sock, remoteJid, mvSender, _mvText);
+            }
+            return;
+          }
+        }
+
         // בקבוצה: להגיב רק עם קידומת / תיוג / תשובה (reply) להודעת הבוט / תמונה עם כיתוב / בקשת סטיקר
         let text = rawText;
         let usedPrefix = false;
@@ -3689,20 +3705,8 @@ async function handleChatMessage(sock, botJid, msg) {
           console.log(`▶️ פקודה ב-${remoteJid}: ${prefix}${text.slice(0, 40)} (fromMe=${!!msg.key.fromMe})`);
         } else if (isGroup && !mentioned && !hasImage && !isReplyToBot(msg)) {
           // חריג: הבעלים מהחשבון עצמו כותב "אמור ..." בקבוצת הניסוי — עובר גם בלי !
-          const _mvText = text.replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim();
           if (msg.key.fromMe && remoteJid === TEST_GROUP_JID && /^אמור[\s-]+/i.test(text)) {
             console.log(`📣 אמור עצמי בקבוצת הניסוי (בלי קידומת)`);
-          } else if (config.MOVIE_GROUP && remoteJid === config.MOVIE_GROUP && !msg.key.fromMe &&
-                     _mvText.length >= 2 && !/^\d+$/.test(_mvText) &&
-                     !_mvText.startsWith('@') && !MOVIE_CHAT_NOISE.test(_mvText)) {
-            // 🎬 קבוצת "בוט הורדת סרטונים": כל הודעה חופשית = חיפוש סרטון
-            const gdMv = gdata(remoteJid);
-            const _mutedMv = !!(gdMv.botMutedUntil && Date.now() < gdMv.botMutedUntil);
-            if (!_mutedMv && isFeatureOn(gdMv, 'video')) {
-              const mvSender = msg.key.participant || remoteJid;
-              await offerMovieDownloads(sock, remoteJid, mvSender, _mvText);
-            }
-            return;
           } else if (!parseSunoRequest(text.replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim())) {
             return; // לא להספים קבוצות — המשך שיחה רק בתשובה להודעת הבוט
           }
