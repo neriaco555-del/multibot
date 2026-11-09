@@ -41,6 +41,8 @@ import {
 } from './games.js';
 import { AI_TOOLS, resolveAiTool, runAiTool, aiToolUsage } from './aifun.js';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { searchWeb, searchImages, translateText, getWeather } from './web-search.js';
 import { getJobs, getNewJobs, formatJobsDigest, formatJobsSingle, recordPosted, loadJobsStore, saveJobsStore, setJobStatus, setJobsAuto, jobsAutoOn } from './jobs.js';
 import {
@@ -1336,11 +1338,38 @@ const lastMedia = new Map(); // 🎬🎵🎨 פקודת מדיה אחרונה ל
 const MOVIE_DL_LIMIT = 5;
 const MOVIE_DL_TTL = 10 * 60 * 1000;
 const MOVIE_MAX_SECONDS = 60 * 60; // עד שעה (מעל זה הקובץ גדול מדי גם לקישור)
+// קבוצות סרטונים (MOVIE_GROUP יכול להכיל כמה JID-ים מופרדים בפסיק)
+const movieGroupSet = new Set(String(config.MOVIE_GROUP || '').split(',').map((s) => s.trim()).filter(Boolean));
+const isMovieGroup = (jid) => movieGroupSet.has(String(jid || ''));
 const movieDlPending = new Map(); // `${remoteJid}:${sender}` -> { q, items, at }
 const movieDlActive = new Set(); // מפתחות של הורדות פעילות
 // שיחות/ניהול בקבוצת ההורדות — לא מחפשים אותן כסרטון
 const MOVIE_CHAT_NOISE = /^(?:היי|הי|שלום|אהלן|הלו|בוקר\s*טוב|ערב\s*טוב|לילה\s*טוב|תודה(?:\s*רבה)?|סבבה|אוקיי|אוקי|בסדר|חחח+|וואו+|וואוו+|יא|מה\s*קורה|מה\s*נשמע|אחלה|מגניב|יפה|כל\s*הכבוד|נכון|בטל|ביטול|עזרה|תפריט|התחל|מנהלים|מצב|הגדרות|אדמין|admin|help|menu)[\s!.,?]*$/i;
 const movieDlKey = (remoteJid, sender) => `${remoteJid}:${sender}`;
+
+// 🧹 ניקוי קבצי/תיקיות הורדה זמניות מהמחשב — שעה אחרי ההורדה
+const MOVIE_TEMP_PREFIXES = ['ytdlv-', 'ytdlu-', 'ytdl-', 'wacompress-'];
+function cleanupMovieTemp(maxAgeMs = 60 * 60 * 1000) {
+  let removed = 0;
+  try {
+    const tmp = os.tmpdir();
+    const now = Date.now();
+    for (const name of fs.readdirSync(tmp)) {
+      if (!MOVIE_TEMP_PREFIXES.some((p) => name.startsWith(p))) continue;
+      const full = path.join(tmp, name);
+      try {
+        const st = fs.statSync(full);
+        if (now - st.mtimeMs > maxAgeMs) {
+          fs.rmSync(full, { recursive: true, force: true });
+          removed++;
+        }
+      } catch {}
+    }
+  } catch {}
+  if (removed) console.log(`🧹 נוקו ${removed} תיקיות הורדה זמניות (מעל שעה)`);
+}
+setInterval(() => cleanupMovieTemp(), 10 * 60 * 1000).unref?.();
+setTimeout(() => cleanupMovieTemp(), 30 * 1000).unref?.();
 const fmtMovieDur = (sec) => {
   const s = Number(sec) || 0;
   if (!s) return '';
@@ -3682,7 +3711,7 @@ async function handleChatMessage(sock, botJid, msg) {
 
         // 🎬 קבוצת "בוט הורדת סרטונים": כל טקסט חופשי (גם תגובה/תיוג) = חיפוש סרטון.
         // חייב להיות לפני שער "רק עם !/תגובה", אחרת הודעות רגילות נבלעות.
-        if (isGroup && config.MOVIE_GROUP && remoteJid === config.MOVIE_GROUP && !msg.key.fromMe && rawText) {
+        if (isGroup && isMovieGroup(remoteJid) && !msg.key.fromMe && rawText) {
           const _mvText = String(rawText).replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim();
           if (_mvText && !_mvText.startsWith(prefix) && _mvText.length >= 2 &&
               !/^\d+$/.test(_mvText) && !_mvText.startsWith('@') && !MOVIE_CHAT_NOISE.test(_mvText)) {
