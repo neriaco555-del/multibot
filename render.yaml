@@ -54,6 +54,8 @@ services:
         value: מולטי בוט
       - key: MOVIE_GROUP
         value: 120363413146436461@g.us,120363432044017523@g.us,120363432359389146@g.us
+      - key: MOVIE_PRIVATE_USERS
+        value: "972548471470"
       - key: MOVIE_MAX_MB
         value: "100"
       - key: MOVIE_WA_SEND_MB

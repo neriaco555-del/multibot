@@ -1341,6 +1341,12 @@ const MOVIE_MAX_SECONDS = 60 * 60; // עד שעה (מעל זה הקובץ גדו
 // קבוצות סרטונים (MOVIE_GROUP יכול להכיל כמה JID-ים מופרדים בפסיק)
 const movieGroupSet = new Set(String(config.MOVIE_GROUP || '').split(',').map((s) => s.trim()).filter(Boolean));
 const isMovieGroup = (jid) => movieGroupSet.has(String(jid || ''));
+// מספרים מורשים להורדת סרטונים בפרטי
+const moviePrivateUsers = new Set((config.MOVIE_PRIVATE_USERS || []).map((d) => String(d).replace(/\D/g, '')).filter(Boolean));
+const isMoviePrivateUser = (v) => {
+  const d = String(v || '').replace(/\D/g, '');
+  return !!d && moviePrivateUsers.has(d);
+};
 const movieDlPending = new Map(); // `${remoteJid}:${sender}` -> { q, items, at }
 const movieDlActive = new Set(); // מפתחות של הורדות פעילות
 // שיחות/ניהול בקבוצת ההורדות — לא מחפשים אותן כסרטון
@@ -3791,9 +3797,12 @@ async function handleChatMessage(sock, botJid, msg) {
         const _hasNativePoll = !!(msg.message?.pollCreationMessage || msg.message?.pollCreationMessageV2 || msg.message?.pollCreationMessageV3);
         if (!isGroup && !text && !hasImage && !hasAudio && !_hasNativePoll) return;
         if (!isGroup) {
-          const _dmOwner = msg.key.fromMe || resolveOwnPhone(msg.key.participant || remoteJid) === OWNER_DIGITS;
+          const _dmPhone = resolveOwnPhone(msg.key.participant) || resolveOwnPhone(msg.key.remoteJidAlt) || resolveOwnPhone(remoteJid);
+          const _dmOwner = msg.key.fromMe || _dmPhone === OWNER_DIGITS;
+          const _dmMovieUser = !msg.key.fromMe &&
+            (isMoviePrivateUser(_dmPhone) || isMoviePrivateUser(msg.key.remoteJidAlt) || isMoviePrivateUser(remoteJid));
           if (_dmOwner) ownerChatJid = remoteJid;
-          if (!_dmOwner) {
+          if (!_dmOwner && !_dmMovieUser) {
             // רק פקודה מפורשת של יצירת סרטון פותחת בקשת אישור
             const _vp = config.VIDEO_ENABLED ? parseExplicitVideoCommand(text, usedPrefix) : null;
             if (_vp !== null) {
@@ -3814,11 +3823,26 @@ async function handleChatMessage(sock, botJid, msg) {
             }
             return;
           }
+          // 🎬 מספר מורשה — הורדת סרטונים בפרטי (טקסט חופשי/קישור/פקודה)
+          if (_dmMovieUser && !_dmOwner) {
+            const _pmText = String(text || '').replace(/[\u200e\u200f\u200b\u200c\u200d\ufeff]/g, '').trim();
+            if (!usedPrefix && _pmText.length >= 2 && !/^\d+$/.test(_pmText) && !MOVIE_CHAT_NOISE.test(_pmText)) {
+              await offerMovieDownloads(sock, remoteJid, msg.key.participant || remoteJid, _pmText);
+              return;
+            }
+            const _isMovieCmd = /^(?:סרט|הורד-וידאו|הורד-סרטון|download-video)(?=\s|:|$)/i.test(text || '');
+            const _isUrl = /^https?:\/\//i.test(_pmText);
+            if (!_isMovieCmd && !_isUrl) {
+              await sock.sendMessage(remoteJid, { text:
+                `🎬 בפרטי אני מוריד סרטונים.\nכתוב/י שם סרטון או קישור, או: ${prefix}סרט <שם>` }).catch(() => {});
+              return;
+            }
+          }
           // --- 🎬 אישור/דחיית בקשת סרטון (בעלים) ---
           {
             const am = text.match(/^(אשר-סרטון|אשר|approve|אישור)\s*[:\-]?\s*(.*)$/is);
             const rm = text.match(/^(דחה-סרטון|דחה|reject|דחייה|בטל-סרטון)\s*[:\-]?\s*(.*)$/is);
-            if ((am || rm) && videoApprovalsHavePending()) {
+            if (_dmOwner && (am || rm) && videoApprovalsHavePending()) {
               const arg = (am ? am[2] : rm[2]) || '';
               await handleVideoApprovalDecision(sock, remoteJid, !!am, arg);
               return;

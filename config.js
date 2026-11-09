@@ -132,6 +132,8 @@ export const config = {
   ALLOWED_GROUPS: (process.env.ALLOWED_GROUPS || '').split(',').map((s) => s.trim()).filter(Boolean),
   // קבוצת "בוט הורדת סרטונים": כל הודעה חופשית בה נחשבת לחיפוש סרטון (בלי צורך ב-!)
   MOVIE_GROUP: (process.env.MOVIE_GROUP || '').trim(),
+  // מספרים מורשים להוריד סרטונים בפרטי (מופרדים בפסיק)
+  MOVIE_PRIVATE_USERS: (process.env.MOVIE_PRIVATE_USERS || '').split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean),
   // גודל מקסימלי להורדה (MB). מעל MOVIE_WA_SEND_MB — נשלח קישור הורדה במקום קובץ
   MOVIE_MAX_MB: Math.max(5, Math.min(1024, parseInt(process.env.MOVIE_MAX_MB || '100', 10) || 100)),
   // גודל מקסימלי לשליחה ישירה בוואטסאפ (MB). גדול מזה עולה ל-Litterbox כקישור
